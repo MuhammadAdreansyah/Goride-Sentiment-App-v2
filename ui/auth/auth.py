@@ -315,6 +315,7 @@ def handle_firebase_error(error: Exception, context: str = "") -> Tuple[str, str
     error_mappings = {
         "INVALID_EMAIL": ("Format email tidak valid", "Format email tidak valid. Periksa kembali alamat email Anda."),
         "USER_NOT_FOUND": _get_user_not_found_message(context),
+        "INVALID_LOGIN_CREDENTIALS": _get_invalid_credentials_message(context),
         "WRONG_PASSWORD": ("Kata sandi salah", "Kata sandi salah. Silakan coba lagi atau reset kata sandi."),
         "INVALID_PASSWORD": ("Kata sandi salah", "Kata sandi salah. Silakan coba lagi atau reset kata sandi."),
         "USER_DISABLED": ("Akun dinonaktifkan", "Akun Anda telah dinonaktifkan. Hubungi administrator."),
@@ -348,6 +349,13 @@ def _get_user_not_found_message(context: str) -> Tuple[str, str]:
     else:
         return "User tidak ditemukan", "User tidak ditemukan dalam sistem."
 
+def _get_invalid_credentials_message(context: str) -> Tuple[str, str]:
+    """Helper function untuk pesan invalid credentials berdasarkan context"""
+    if context == "login":
+        return "Email tidak terdaftar", "Email tidak terdaftar dalam sistem kami. Silakan daftar terlebih dahulu atau periksa ejaan email Anda."
+    else:
+        return "Kredensial tidak valid", "Kredensial login tidak valid. Periksa email dan kata sandi Anda."
+
 def _get_too_many_requests_message(context: str) -> Tuple[str, str]:
     """Helper function untuk pesan too many requests berdasarkan context"""
     if context == "login":
@@ -371,13 +379,21 @@ def show_error_with_context(error: Exception, context: str, progress_container: 
     
     # Clear progress jika ada
     if progress_container:
-        progress_container.empty()
+        try:
+            progress_container.empty()
+        except Exception as e:
+            logger.warning(f"Failed to clear progress container: {e}")
     
-    # Tampilkan pesan error
-    if message_container:
-        message_container.error(f"❌ {detailed_msg}")
-    else:
-        st.error(f"❌ {detailed_msg}")
+    # Tampilkan pesan error dengan fallback
+    try:
+        if message_container:
+            message_container.error(f"❌ {detailed_msg}")
+        else:
+            st.error(f"❌ {detailed_msg}")
+    except Exception as e:
+        logger.error(f"Failed to display error message: {e}")
+        # Ultimate fallback
+        st.write(f"❌ {detailed_msg}")
     
     # Tampilkan toast
     show_error_toast(toast_msg)
@@ -874,7 +890,7 @@ def login_user(email: str, password: str, firebase_auth: Any, firestore_client: 
         
         # Step 2: Checking email verification status
         progress_container.progress(0.5)
-        message_container.caption("  Memeriksa status verifikasi email...")
+        message_container.caption("� Memeriksa status verifikasi email...")
         
         # Sync dan cek status verifikasi email dari Firebase Auth
         email_verified = sync_email_verified_to_firestore(firebase_auth, firestore_client, user)
@@ -925,8 +941,32 @@ def login_user(email: str, password: str, firebase_auth: Any, firestore_client: 
         
     except Exception as e:
         st.session_state['login_attempts'] = st.session_state.get('login_attempts', 0) + 1
-        show_error_with_context(e, "login", progress_container, message_container)
-        return False
+        
+        # Enhanced error handling untuk memberikan pesan yang lebih spesifik
+        error_str = str(e).upper()
+        
+        # Khusus untuk INVALID_LOGIN_CREDENTIALS, berikan pesan seperti Google OAuth
+        if "INVALID_LOGIN_CREDENTIALS" in error_str:
+            progress_container.empty()
+            
+            # Tampilkan pesan error langsung di message_container
+            show_error_toast(f"Email {email} tidak terdaftar dalam sistem kami")
+            message_container.error(
+                f"**Akun Email Tidak Terdaftar**\n\n"
+                f"Email {email} belum terdaftar dalam sistem kami."
+            )
+            message_container.info(
+                f"💡 **Saran:** Silakan daftar terlebih dahulu menggunakan tab 'Daftar' "
+                f"atau periksa ejaan email Anda."
+            )
+            
+            # Log error
+            logger.warning(f"Login failed - email not registered: {email}")
+            return False
+        else:
+            # Gunakan centralized error handling untuk error lainnya
+            show_error_with_context(e, "login", progress_container, message_container)
+            return False
 
 def register_user(first_name: str, last_name: str, email: str, password: str, 
                  firebase_auth: Any, firestore_client: Any, is_google: bool, 
@@ -1159,7 +1199,13 @@ def logout() -> None:
 
 def show_toast_notification(message: str, icon: str = "ℹ") -> None:
     """Tampilkan notifikasi toast dengan gaya yang konsisten"""
-    st.toast(message, icon=icon)
+    try:
+        st.toast(message, icon=icon)
+        logger.debug(f"Toast displayed: {icon} {message}")
+    except Exception as e:
+        logger.error(f"Failed to show toast: {e}")
+        # Fallback: tampilkan sebagai st.info jika toast gagal
+        st.info(f"{icon} {message}")
 
 def show_success_toast(message: str) -> None:
     """Tampilkan notifikasi toast sukses"""
@@ -1417,7 +1463,7 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             st.error(f"**Akun Google Tidak Terdaftar**\n\n"
                     f"Akun Google {email_error} belum terdaftar dalam sistem kami.")
             st.info(f"💡 **Saran:** Silakan daftar terlebih dahulu menggunakan tab 'Daftar' atau gunakan akun email yang sudah terdaftar.")
-        show_error_toast(f"❌ Akun Google {email_error} tidak terdaftar dalam sistem kami.")
+        show_error_toast(f"Akun Google {email_error} tidak terdaftar dalam sistem kami.")
         del st.session_state['google_auth_error']
         if 'google_auth_email' in st.session_state:
             del st.session_state['google_auth_email']
@@ -1458,9 +1504,29 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
                 message_container.caption("🔐 Memulai proses login...")
                 
                 # Proses login dengan email yang sudah divalidasi
-                result = login_user(email_clean, password, firebase_auth, firestore_client, remember, progress_container, message_container)
-                if result:
-                    st.rerun()
+                try:
+                    result = login_user(email_clean, password, firebase_auth, firestore_client, remember, progress_container, message_container)
+                    if result:
+                        st.rerun()
+                except Exception as login_error:
+                    # Fallback error handling jika login_user tidak menampilkan error
+                    progress_container.empty()
+                    logger.error(f"Login process failed: {login_error}")
+                    
+                    error_str = str(login_error).upper()
+                    if "INVALID_LOGIN_CREDENTIALS" in error_str:
+                        show_error_toast(f"Email {email_clean} tidak terdaftar dalam sistem kami")
+                        message_container.error(
+                            f"**Akun Email Tidak Terdaftar**\n\n"
+                            f"Email {email_clean} belum terdaftar dalam sistem kami."
+                        )
+                        message_container.info(
+                            f"💡 **Saran:** Silakan daftar terlebih dahulu menggunakan tab 'Daftar' "
+                            f"atau periksa ejaan email Anda."
+                        )
+                    else:
+                        show_error_toast("Login gagal")
+                        message_container.error(f"❌ Login gagal: {str(login_error)}")
         else:
             with feedback_placeholder.container():
                 st.warning("⚠️ Silakan isi kolom email dan kata sandi.")
