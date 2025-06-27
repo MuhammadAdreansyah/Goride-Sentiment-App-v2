@@ -1,0 +1,29 @@
+# Folder dan file hasil kompilasi Python
+__pycache__/
+*.pyc
+
+# File model dan log
+*.pkl
+*.log
+config/client_secret_*.json
+config/firebase_*.json
+
+
+# Folder konfigurasi dan log aplikasi
+config/
+log/
+
+# Folder model machine learning
+models/
+
+# Data mentah dan hasil preprocessing
+/data/
+
+# Virtual Environment
+/venv/
+/env/
+.venv/
+env/
+
+# Folder konfigurasi Streamlit
+.streamlit/
