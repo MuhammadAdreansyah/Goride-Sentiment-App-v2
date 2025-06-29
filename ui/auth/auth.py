@@ -815,9 +815,10 @@ def handle_google_login_callback() -> bool:
                     return True
                 else:
                     # Email belum diverifikasi untuk user non-Google
-                    show_warning_toast("Akses Ditolak: Email Belum Diverifikasi")
-                    st.warning("📧 **Email Anda belum diverifikasi!**\n\n"
-                              "Silakan periksa kotak masuk email Anda dan klik link verifikasi.")
+                    # Simpan error di session state untuk ditampilkan di feedback_placeholder
+                    st.session_state['google_auth_verification_error'] = True
+                    st.session_state['google_auth_email'] = user_email
+                    st.query_params.clear()
                     return False
             else:
                 # User tidak ada di Firestore, arahkan ke registrasi
@@ -899,10 +900,11 @@ def login_user(email: str, password: str, firebase_auth: Any, firestore_client: 
             progress_container.empty()
             show_warning_toast("Email belum diverifikasi")
             message_container.warning(
-                "📧 **Email Anda belum diverifikasi!**\n\n"
-                "Silakan periksa kotak masuk email Anda dan klik link verifikasi yang telah dikirim. "
-                "Setelah verifikasi, silakan coba login kembali.\n\n"
-                "💡 *Tip: Periksa juga folder spam/junk email*"
+                f"📧 **Email Anda belum diverifikasi!**\n\n"
+                f"Email {email} belum diverifikasi. "
+                f"Silakan periksa kotak masuk email Anda dan klik link verifikasi yang telah dikirim. "
+                f"Setelah verifikasi, silakan coba login kembali.\n\n"
+                f"💡 *Tip: Periksa juga folder spam/junk email*"
             )
             return False
         
@@ -1465,6 +1467,22 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             st.info(f"💡 **Saran:** Silakan daftar terlebih dahulu menggunakan tab 'Daftar' atau gunakan akun email yang sudah terdaftar.")
         show_error_toast(f"Akun Google {email_error} tidak terdaftar dalam sistem kami.")
         del st.session_state['google_auth_error']
+        if 'google_auth_email' in st.session_state:
+            del st.session_state['google_auth_email']
+
+    # Tampilkan pesan error verifikasi Google OAuth jika ada - di placeholder yang konsisten
+    if st.session_state.get('google_auth_verification_error', False):
+        email_error = st.session_state.get('google_auth_email', '')
+        with feedback_placeholder.container():
+            st.warning(
+                f"📧 **Email Anda belum diverifikasi!**\n\n"
+                f"Email {email_error} belum diverifikasi. "
+                f"Silakan periksa kotak masuk email Anda dan klik link verifikasi yang telah dikirim. "
+                f"Setelah verifikasi, silakan coba login kembali.\n\n"
+                f"💡 *Tip: Periksa juga folder spam/junk email*"
+            )
+        show_warning_toast("Email belum diverifikasi")
+        del st.session_state['google_auth_verification_error']
         if 'google_auth_email' in st.session_state:
             del st.session_state['google_auth_email']
 

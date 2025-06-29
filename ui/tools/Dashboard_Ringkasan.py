@@ -854,7 +854,7 @@ def render_time_trend_tab(topic_data: pd.DataFrame):
             with col2:
                 st.metric("🎯 Akhir", f"{latest_pct:.1f}%")
             with col3:
-                trend_emoji = "📈" if trend_change > 0 else "📉" if trend_change < 0 else "➡️"
+                trend_emoji = "�" if trend_change > 0 else "📉" if trend_change < 0 else "➡️"
                 st.metric(f"{trend_emoji} Δ", f"{trend_change:+.1f}%")
             with col4:
                 st.markdown(create_download_link(sentiment_pivot, f"sentiment_trend_{time_granularity.lower()}.csv", "📥 Download CSV"), unsafe_allow_html=True)
