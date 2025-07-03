@@ -1776,7 +1776,6 @@ def tampilkan_header_sambutan():
         st.markdown(f"""
             <div class="welcome-header">
                 <img src="data:image/png;base64,{img_base64}" alt="SentimenGo Logo" style="width:170px; display:block; margin:0 auto 1rem auto;">
-                <div style="text-align:center; font-size:1.8rem; font-weight:bold; margin-bottom:1rem; color:#2E8B57;">Selamat Datang di SentimenGo!</div>
                 <div style="text-align:center; font-size:1rem; color:#666; margin-bottom:2rem;">Sistem Analisis Sentimen GoRide</div>
             </div>
         """, unsafe_allow_html=True)
@@ -1987,44 +1986,57 @@ def main() -> None:
         # Clear initialization message setelah selesai
         initialization_container.empty()
         
-        # Verifikasi Firebase berhasil diinisialisasi
+        # Verifikasi Firebase berhasil diinisialisasi (log hanya sekali per session)
         if firebase_auth and firestore_client:
-            logger.info("Firebase successfully initialized and ready")
+            if not st.session_state.get('firebase_ready_logged'):
+                logger.info("[AUTH][FIREBASE] Firebase successfully initialized and ready")
+                st.session_state['firebase_ready_logged'] = True
         else:
-            logger.error("Firebase initialization failed")
-        
+            if not st.session_state.get('firebase_failed_logged'):
+                logger.error("[AUTH][FIREBASE] Firebase initialization failed")
+                st.session_state['firebase_failed_logged'] = True
+
         # Cek status login (hanya jika Firebase tersedia dan user sudah login)
         if firebase_auth and firestore_client and st.session_state.get('logged_in', False) and not st.session_state.get('force_auth_page', False):
             if check_session_timeout():
                 user_email = st.session_state.get('user_email')
                 if user_email and verify_user_exists(user_email, firestore_client):
+                    if not st.session_state.get('user_authenticated_logged'):
+                        logger.info(f"[AUTH][SESSION] User authenticated | email={user_email}")
+                        st.session_state['user_authenticated_logged'] = True
                     # User terautentikasi, keluar dari fungsi auth
                     return
                 else:
-                    logger.warning(f"Pengguna {user_email} gagal verifikasi, melakukan logout paksa")
+                    if not st.session_state.get('user_verification_failed_logged'):
+                        logger.warning(f"[AUTH][SESSION] User verification failed, force logout | email={user_email}")
+                        st.session_state['user_verification_failed_logged'] = True
                     st.error("Masalah autentikasi terdeteksi. Silakan login kembali.")
                     logout()
                     st.session_state['force_auth_page'] = True
                     st.rerun()
-          # Tampilkan UI autentikasi dalam container yang tepat
+        # Tampilkan UI autentikasi dalam container yang tepat
         with st.container():
             st.markdown('<div class="auth-content-wrapper">', unsafe_allow_html=True)
             tampilkan_header_sambutan()
-            
+
             # Handle logout message
             if st.query_params.get("logout") == "1":
+                if not st.session_state.get('logout_logged'):
+                    logger.info("[AUTH][LOGOUT] User logged out via query param")
+                    st.session_state['logout_logged'] = True
                 st.toast("Anda telah berhasil logout.", icon="✅")
                 st.query_params.clear()
-              # Handle Google OAuth callback atau tampilkan form autentikasi
+            # Handle Google OAuth callback atau tampilkan form autentikasi
             if firebase_auth and firestore_client:
                 # Handle Google OAuth callback jika ada
                 handle_google_login_callback()
-                
+
                 # Selalu tampilkan pilihan autentikasi jika user belum login
                 if not st.session_state.get('logged_in', False):
                     tampilkan_pilihan_autentikasi(firebase_auth, firestore_client)
             else:
                 # Firebase tidak tersedia - tampilkan error konfigurasi untuk produksi
+                logger.error("[AUTH][FIREBASE] Firebase unavailable - configuration error")
                 st.error("🔥 *Kesalahan Konfigurasi Firebase*")
                 st.error("""
                 *Aplikasi tidak dapat berjalan tanpa konfigurasi Firebase yang valid.*
@@ -2036,12 +2048,12 @@ def main() -> None:
                 
                 Hubungi administrator sistem untuk bantuan konfigurasi.
                 """)
-            
+
             # Close the content wrapper
             st.markdown('</div>', unsafe_allow_html=True)
-            
+
     except Exception as e:
-        logger.critical(f"Aplikasi crash: {str(e)}", exc_info=True)
+        logger.critical(f"[AUTH][CRASH] Unhandled exception: {str(e)}", exc_info=True)
         st.error("Terjadi kesalahan yang tidak terduga. Silakan coba lagi nanti.")
         st.session_state.clear()
         initialize_session_state()
