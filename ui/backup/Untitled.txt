@@ -12,26 +12,34 @@ Aplikasi ini menyediakan sistem autentikasi lengkap dengan fitur:
 
 Author: SentimenGo App Team
 Created: 2024
-Last Modified: 2025-07-06
+Last Modified: 2025-06-24
 """
+
+# =============================================================================
+# IMPORTS AND DEPENDENCIES
+# =============================================================================
 
 import streamlit as st
 import re
+import uuid
 import asyncio
 import httpx
 import time
 import base64
 import logging
-import secrets
 import firebase_admin
 import pyrebase
 from firebase_admin import credentials, auth, firestore
 from datetime import datetime, timedelta
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Union, Any
 from urllib.parse import urlencode
+
 from streamlit_cookies_controller import CookieController
 
-# Logging configuration
+# =============================================================================
+# LOGGING CONFIGURATION
+# =============================================================================
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -42,45 +50,118 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Configuration constants
-SESSION_TIMEOUT = 3600  # 1 hour
-MAX_LOGIN_ATTEMPTS = 5
-RATE_LIMIT_WINDOW = 300  # 5 minutes
-EMAIL_VERIFICATION_LIMIT = 50  # per hour
-REMEMBER_ME_DURATION = 30 * 24 * 60 * 60  # 30 days
-LAST_EMAIL_DURATION = 90 * 24 * 60 * 60  # 90 days
+# =============================================================================
+# CONFIGURATION CLASS
+# =============================================================================
 
-# Initialize cookie controller
+class AuthConfig:
+    """Konfigurasi autentikasi dengan error handling yang lebih baik"""
+    
+    # Default values
+    DEFAULT_SESSION_TIMEOUT = 3600  # 1 jam dalam detik
+    DEFAULT_MAX_LOGIN_ATTEMPTS = 5
+    DEFAULT_RATE_LIMIT_WINDOW = 300  # 5 menit dalam detik
+    DEFAULT_EMAIL_VERIFICATION_LIMIT = 50  # per jam
+    DEFAULT_REMEMBER_ME_DURATION = 30 * 24 * 60 * 60  # 30 hari
+    DEFAULT_LAST_EMAIL_DURATION = 90 * 24 * 60 * 60  # 90 hari
+    
+    def __init__(self):
+        self._load_config()
+    
+    def _load_config(self) -> None:
+        """Load konfigurasi dengan fallback ke default values"""
+        try:
+            # Firebase dan Google OAuth konfigurasi
+            self.GOOGLE_CLIENT_ID = st.secrets.get("GOOGLE_CLIENT_ID", "")
+            self.GOOGLE_CLIENT_SECRET = st.secrets.get("GOOGLE_CLIENT_SECRET", "")
+            self.REDIRECT_URI = st.secrets.get("REDIRECT_URI", "")
+            self.FIREBASE_API_KEY = st.secrets.get("FIREBASE_API_KEY", "")
+            
+            # Timeout dan limit konfigurasi dengan fallback
+            self.SESSION_TIMEOUT = st.secrets.get("SESSION_TIMEOUT", self.DEFAULT_SESSION_TIMEOUT)
+            self.MAX_LOGIN_ATTEMPTS = st.secrets.get("MAX_LOGIN_ATTEMPTS", self.DEFAULT_MAX_LOGIN_ATTEMPTS)
+            self.RATE_LIMIT_WINDOW = st.secrets.get("RATE_LIMIT_WINDOW", self.DEFAULT_RATE_LIMIT_WINDOW)
+            self.EMAIL_VERIFICATION_LIMIT = st.secrets.get("EMAIL_VERIFICATION_LIMIT", self.DEFAULT_EMAIL_VERIFICATION_LIMIT)
+            self.REMEMBER_ME_DURATION = st.secrets.get("REMEMBER_ME_DURATION", self.DEFAULT_REMEMBER_ME_DURATION)
+            self.LAST_EMAIL_DURATION = st.secrets.get("LAST_EMAIL_DURATION", self.DEFAULT_LAST_EMAIL_DURATION)
+            
+            # Validasi konfigurasi kritis
+            self._validate_config()
+            
+        except Exception as e:
+            logger.critical(f"Configuration loading failed: {e}")
+            self._use_fallback_config()
+    
+    def _validate_config(self) -> None:
+        """Validasi konfigurasi kritis"""
+        required_fields = {
+            "GOOGLE_CLIENT_ID": self.GOOGLE_CLIENT_ID,
+            "GOOGLE_CLIENT_SECRET": self.GOOGLE_CLIENT_SECRET,
+            "REDIRECT_URI": self.REDIRECT_URI,
+            "FIREBASE_API_KEY": self.FIREBASE_API_KEY
+        }
+        
+        missing_fields = [field for field, value in required_fields.items() if not value]
+        
+        if missing_fields:
+            logger.error(f"Missing critical configuration: {', '.join(missing_fields)}")
+            if not st.session_state.get('config_error_shown', False):
+                st.error(f"❌ **Konfigurasi tidak lengkap:** {', '.join(missing_fields)}")
+                st.session_state['config_error_shown'] = True
+    
+    def _use_fallback_config(self) -> None:
+        """Gunakan konfigurasi fallback jika terjadi error"""
+        logger.warning("Using fallback configuration")
+        self.GOOGLE_CLIENT_ID = ""
+        self.GOOGLE_CLIENT_SECRET = ""
+        self.REDIRECT_URI = ""
+        self.FIREBASE_API_KEY = ""
+        self.SESSION_TIMEOUT = self.DEFAULT_SESSION_TIMEOUT
+        self.MAX_LOGIN_ATTEMPTS = self.DEFAULT_MAX_LOGIN_ATTEMPTS
+        self.RATE_LIMIT_WINDOW = self.DEFAULT_RATE_LIMIT_WINDOW
+        self.EMAIL_VERIFICATION_LIMIT = self.DEFAULT_EMAIL_VERIFICATION_LIMIT
+        self.REMEMBER_ME_DURATION = self.DEFAULT_REMEMBER_ME_DURATION
+        self.LAST_EMAIL_DURATION = self.DEFAULT_LAST_EMAIL_DURATION
+    
+    def is_valid(self) -> bool:
+        """Check apakah konfigurasi valid untuk operasi"""
+        return bool(
+            self.GOOGLE_CLIENT_ID and 
+            self.GOOGLE_CLIENT_SECRET and 
+            self.REDIRECT_URI and 
+            self.FIREBASE_API_KEY
+        )
+    
+    def get_firebase_config(self) -> Dict[str, Any]:
+        """Dapatkan konfigurasi Firebase yang terstruktur"""
+        try:
+            if "firebase" not in st.secrets:
+                return {}
+            
+            service_account = dict(st.secrets["firebase"])
+            return {
+                "apiKey": self.FIREBASE_API_KEY,
+                "authDomain": f"{service_account.get('project_id', '')}.firebaseapp.com",
+                "projectId": service_account.get('project_id', ''),
+                "databaseURL": f"https://{service_account.get('project_id', '')}-default-rtdb.firebaseio.com",
+                "storageBucket": f"{service_account.get('project_id', '')}.appspot.com"
+            }
+        except Exception as e:
+            logger.error(f"Failed to get Firebase config: {e}")
+            return {}
+
+# Initialize global config
+Config = AuthConfig()
+
+# =============================================================================
+# GLOBAL VARIABLES
+# =============================================================================
+
 cookie_controller = CookieController()
 
-def get_firebase_config() -> Dict[str, Any]:
-    """Dapatkan konfigurasi Firebase yang terstruktur"""
-    try:
-        if "firebase" not in st.secrets:
-            return {}
-        
-        service_account = dict(st.secrets["firebase"])
-        firebase_api_key = st.secrets.get("FIREBASE_API_KEY", "")
-        
-        return {
-            "apiKey": firebase_api_key,
-            "authDomain": f"{service_account.get('project_id', '')}.firebaseapp.com",
-            "projectId": service_account.get('project_id', ''),
-            "databaseURL": f"https://{service_account.get('project_id', '')}-default-rtdb.firebaseio.com",
-            "storageBucket": f"{service_account.get('project_id', '')}.appspot.com"
-        }
-    except Exception as e:
-        logger.error(f"Failed to get Firebase config: {e}")
-        return {}
-
-def is_config_valid() -> bool:
-    """Check apakah konfigurasi valid untuk operasi"""
-    return bool(
-        st.secrets.get("GOOGLE_CLIENT_ID") and 
-        st.secrets.get("GOOGLE_CLIENT_SECRET") and 
-        st.secrets.get("REDIRECT_URI") and 
-        st.secrets.get("FIREBASE_API_KEY")
-    )
+# =============================================================================
+# SESSION MANAGEMENT FUNCTIONS
+# =============================================================================
 
 def initialize_session_state() -> None:
     """Inisialisasi state sesi dengan nilai default"""
@@ -89,8 +170,13 @@ def initialize_session_state() -> None:
         'login_attempts': 0,
         'firebase_initialized': False,
         'auth_type': '🔒 Masuk',
+        'auth_type_changed': False,
         'user_email': None,
         'remember_me': False,
+        'models_prepared': False,
+        'model_preparation_started': False,
+        'model_preparation_completed': False,
+        'ready_for_tools': False,
         'login_time': None
     }
     
@@ -100,7 +186,7 @@ def initialize_session_state() -> None:
 
 def verify_environment() -> bool:
     """Verifikasi bahwa semua variabel lingkungan yang diperlukan telah diset"""
-    if not is_config_valid():
+    if not Config.is_valid():
         logger.error("Configuration validation failed")
         return False
     
@@ -155,10 +241,10 @@ def set_remember_me_cookies(email: str, remember: bool = False) -> None:
     try:
         if remember:
             # Set cookies dengan masa berlaku yang dikonfigurasi
-            cookie_controller.set('is_logged_in', 'True', max_age=REMEMBER_ME_DURATION)
-            cookie_controller.set('user_email', email, max_age=REMEMBER_ME_DURATION)
-            cookie_controller.set('remember_me', 'True', max_age=REMEMBER_ME_DURATION)
-            cookie_controller.set('last_email', email, max_age=LAST_EMAIL_DURATION)
+            cookie_controller.set('is_logged_in', 'True', max_age=Config.REMEMBER_ME_DURATION)
+            cookie_controller.set('user_email', email, max_age=Config.REMEMBER_ME_DURATION)
+            cookie_controller.set('remember_me', 'True', max_age=Config.REMEMBER_ME_DURATION)
+            cookie_controller.set('last_email', email, max_age=Config.LAST_EMAIL_DURATION)
         else:
             # Set session cookies (berakhir saat browser ditutup)
             cookie_controller.set('is_logged_in', 'True')
@@ -213,67 +299,124 @@ def clear_remember_me_cookies() -> None:
 # =============================================================================
 
 def handle_firebase_error(error: Exception, context: str = "") -> Tuple[str, str]:
-    """Centralized Firebase error handling dengan pesan yang konsisten"""
+    """
+    Centralized Firebase error handling dengan pesan yang konsisten
+    
+    Args:
+        error: Exception yang terjadi
+        context: Konteks dimana error terjadi (login, register, reset, dll)
+    
+    Returns:
+        Tuple[toast_message, detailed_message]
+    """
     error_str = str(error).upper()
     
     # Firebase Authentication Errors
-    if "INVALID_EMAIL" in error_str:
-        return "Format email tidak valid", "Format email tidak valid. Periksa kembali alamat email Anda."
-    elif "USER_NOT_FOUND" in error_str or "INVALID_LOGIN_CREDENTIALS" in error_str:
-        if context == "login":
-            return "Email tidak terdaftar", "Email tidak terdaftar dalam sistem kami. Silakan daftar terlebih dahulu."
-        else:
-            return "User tidak ditemukan", "User tidak ditemukan dalam sistem."
-    elif "WRONG_PASSWORD" in error_str or "INVALID_PASSWORD" in error_str:
-        return "Kata sandi salah", "Kata sandi salah. Silakan coba lagi atau reset kata sandi."
-    elif "USER_DISABLED" in error_str:
-        return "Akun dinonaktifkan", "Akun Anda telah dinonaktifkan. Hubungi administrator."
-    elif "EMAIL_EXISTS" in error_str or "EMAIL_ALREADY_IN_USE" in error_str:
-        return "Email sudah terdaftar", "Email ini sudah terdaftar. Silakan gunakan email lain atau login."
-    elif "WEAK_PASSWORD" in error_str:
-        return "Kata sandi terlalu lemah", "Kata sandi terlalu lemah. Gunakan minimal 8 karakter dengan kombinasi huruf besar, kecil, angka dan simbol."
-    elif "TOO_MANY_REQUESTS" in error_str:
-        return "Terlalu banyak percobaan", "Terlalu banyak percobaan. Tunggu beberapa menit sebelum mencoba lagi."
-    elif "NETWORK_REQUEST_FAILED" in error_str:
-        return "Koneksi bermasalah", "Koneksi internet bermasalah. Periksa koneksi Anda dan coba lagi."
-    elif "QUOTA_EXCEEDED" in error_str:
-        return "Batas tercapai", "Batas pengiriman email Firebase tercapai. Coba lagi nanti."
+    error_mappings = {
+        "INVALID_EMAIL": ("Format email tidak valid", "Format email tidak valid. Periksa kembali alamat email Anda."),
+        "USER_NOT_FOUND": _get_user_not_found_message(context),
+        "INVALID_LOGIN_CREDENTIALS": _get_invalid_credentials_message(context),
+        "WRONG_PASSWORD": ("Kata sandi salah", "Kata sandi salah. Silakan coba lagi atau reset kata sandi."),
+        "INVALID_PASSWORD": ("Kata sandi salah", "Kata sandi salah. Silakan coba lagi atau reset kata sandi."),
+        "USER_DISABLED": ("Akun dinonaktifkan", "Akun Anda telah dinonaktifkan. Hubungi administrator."),
+        "EMAIL_EXISTS": ("Email sudah terdaftar", "Email ini sudah terdaftar. Silakan gunakan email lain atau login dengan akun yang ada."),
+        "EMAIL_ALREADY_IN_USE": ("Email sudah terdaftar", "Email ini sudah terdaftar. Silakan gunakan email lain atau login dengan akun yang ada."),
+        "WEAK_PASSWORD": ("Kata sandi terlalu lemah", "Kata sandi terlalu lemah. Gunakan minimal 8 karakter dengan kombinasi huruf besar, kecil, angka dan simbol."),
+        "TOO_MANY_REQUESTS": _get_too_many_requests_message(context),
+        "NETWORK_REQUEST_FAILED": ("Koneksi bermasalah", "Koneksi internet bermasalah. Periksa koneksi Anda dan coba lagi."),
+        "QUOTA_EXCEEDED": ("Batas tercapai", "Batas pengiriman email Firebase tercapai. Coba lagi nanti."),
+        "INVALID_ID_TOKEN": ("Token tidak valid", "Token tidak valid. Silakan registrasi ulang."),
+        "OPERATION_NOT_ALLOWED": ("Operasi tidak diizinkan", "Operasi tidak diizinkan. Hubungi administrator.")
+    }
+    
+    # Cari error yang cocok
+    for error_key, messages in error_mappings.items():
+        if error_key in error_str:
+            if isinstance(messages, tuple):
+                return messages
+            else:
+                return messages()  # Untuk function yang mengembalikan tuple
+    
+    # Generic error jika tidak ada yang cocok
+    return f"{context.title()} gagal", f"{context.title()} gagal: {str(error)}"
+
+def _get_user_not_found_message(context: str) -> Tuple[str, str]:
+    """Helper function untuk pesan user not found berdasarkan context"""
+    if context == "login":
+        return "Email tidak terdaftar", "Email tidak terdaftar. Silakan daftar terlebih dahulu atau periksa ejaan."
+    elif context == "reset":
+        return "Akun tidak ditemukan", "Tidak ada akun yang ditemukan dengan alamat email ini."
     else:
-        return f"{context.title()} gagal", f"{context.title()} gagal: {str(error)}"
+        return "User tidak ditemukan", "User tidak ditemukan dalam sistem."
+
+def _get_invalid_credentials_message(context: str) -> Tuple[str, str]:
+    """Helper function untuk pesan invalid credentials berdasarkan context"""
+    if context == "login":
+        return "Email tidak terdaftar", "Email tidak terdaftar dalam sistem kami. Silakan daftar terlebih dahulu atau periksa ejaan email Anda."
+    else:
+        return "Kredensial tidak valid", "Kredensial login tidak valid. Periksa email dan kata sandi Anda."
+
+def _get_too_many_requests_message(context: str) -> Tuple[str, str]:
+    """Helper function untuk pesan too many requests berdasarkan context"""
+    if context == "login":
+        return "Terlalu banyak percobaan", "Terlalu banyak percobaan login. Tunggu beberapa menit sebelum mencoba lagi."
+    elif context == "reset":
+        return "Terlalu banyak permintaan", "Terlalu banyak permintaan reset password. Tunggu beberapa menit sebelum mencoba lagi."
+    else:
+        return "Terlalu banyak permintaan", "Terlalu banyak permintaan. Tunggu beberapa saat sebelum mencoba lagi."
 
 def show_error_with_context(error: Exception, context: str, progress_container: Any = None, message_container: Any = None) -> None:
-    """Tampilkan error dengan konteks dan UI feedback yang konsisten"""
+    """
+    Tampilkan error dengan konteks dan UI feedback yang konsisten
+    
+    Args:
+        error: Exception yang terjadi
+        context: Konteks error (login, register, reset)
+        progress_container: Container untuk progress (opsional)
+        message_container: Container untuk pesan (opsional)
+    """
     toast_msg, detailed_msg = handle_firebase_error(error, context)
     
     # Clear progress jika ada
     if progress_container:
         try:
             progress_container.empty()
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to clear progress container: {e}")
     
-    # Tampilkan pesan error
+    # Tampilkan pesan error dengan fallback
     try:
         if message_container:
             message_container.error(f"❌ {detailed_msg}")
         else:
             st.error(f"❌ {detailed_msg}")
-    except:
+    except Exception as e:
+        logger.error(f"Failed to display error message: {e}")
+        # Ultimate fallback
         st.write(f"❌ {detailed_msg}")
     
     # Tampilkan toast
     show_error_toast(toast_msg)
     
-    # Log error
+    # Log error dengan context
     logger.error(f"{context.title()} failed: {str(error)}")
 
 def handle_validation_errors(errors: list, progress_container: Any = None, message_container: Any = None) -> None:
-    """Handle validation errors dengan display yang konsisten"""
+    """
+    Handle validation errors dengan display yang konsisten
+    
+    Args:
+        errors: List of validation error messages
+        progress_container: Container untuk progress (opsional)
+        message_container: Container untuk pesan (opsional)
+    """
     if not errors:
         return
     
     if progress_container:
         progress_container.empty()
+    
+    combined_errors = "\n".join(errors)
     
     if message_container:
         message_container.error("❌ Validasi data gagal:")
@@ -285,10 +428,14 @@ def handle_validation_errors(errors: list, progress_container: Any = None, messa
             st.error(error)
     
     show_error_toast("Data tidak valid")
-    logger.warning(f"Validation failed: {'; '.join(errors)}")
+    logger.warning(f"Validation failed: {combined_errors}")
+
+# =============================================================================
+# VALIDATION FUNCTIONS
+# =============================================================================
 
 def validate_email_format(email: str) -> Tuple[bool, str]:
-    """Validasi format email"""
+    """Validasi format email dengan aturan yang komprehensif"""
     if not email:
         return False, "Email tidak boleh kosong"
     
@@ -298,16 +445,19 @@ def validate_email_format(email: str) -> Tuple[bool, str]:
     if not re.match(email_pattern, email):
         return False, "Format email tidak valid. Contoh: nama@domain.com"
     
-    if len(email) > 254:
+    # Pemeriksaan tambahan
+    if len(email) > 254:  # Batas RFC 5321
         return False, "Email terlalu panjang (maksimal 254 karakter)"
     
     local_part, domain = email.rsplit('@', 1)
-    if len(local_part) > 64:
+    if len(local_part) > 64:  # Batas RFC 5321
         return False, "Bagian lokal email terlalu panjang (maksimal 64 karakter)"
     
+    # Periksa titik berturut-turut
     if '..' in email:
         return False, "Email tidak boleh mengandung titik berturut-turut"
     
+    # Periksa jika diawali atau diakhiri dengan titik
     if local_part.startswith('.') or local_part.endswith('.'):
         return False, "Email tidak boleh diawali atau diakhiri dengan titik"
     
@@ -343,6 +493,10 @@ def validate_password(password: str) -> Tuple[bool, str]:
         return False, "Kata sandi harus mengandung angka"
     return True, ""
 
+# =============================================================================
+# SECURITY FUNCTIONS
+# =============================================================================
+
 def check_rate_limit(user_email: str) -> bool:
     """Periksa apakah pengguna telah melebihi batas laju untuk percobaan login"""
     now = datetime.now()
@@ -352,10 +506,10 @@ def check_rate_limit(user_email: str) -> bool:
     # Hapus percobaan di luar jendela
     valid_attempts = [
         attempt for attempt in attempts 
-        if (now - attempt) < timedelta(seconds=RATE_LIMIT_WINDOW)
+        if (now - attempt) < timedelta(seconds=Config.RATE_LIMIT_WINDOW)
     ]
 
-    if len(valid_attempts) >= MAX_LOGIN_ATTEMPTS:
+    if len(valid_attempts) >= Config.MAX_LOGIN_ATTEMPTS:
         return False
 
     valid_attempts.append(now)
@@ -366,7 +520,7 @@ def check_session_timeout() -> bool:
     """Periksa apakah sesi pengguna telah kedaluwarsa"""
     if 'login_time' in st.session_state and st.session_state['login_time']:
         elapsed = (datetime.now() - st.session_state['login_time']).total_seconds()
-        if elapsed > SESSION_TIMEOUT:
+        if elapsed > Config.SESSION_TIMEOUT:
             logout()
             return False
     return True
@@ -384,7 +538,7 @@ def check_email_verification_quota() -> Tuple[bool, str]:
             if (now - attempt) < timedelta(hours=1)
         ]
         
-        if len(valid_attempts) >= EMAIL_VERIFICATION_LIMIT:
+        if len(valid_attempts) >= Config.EMAIL_VERIFICATION_LIMIT:
             return False, "Batas pengiriman email tercapai. Silakan coba lagi dalam 1 jam."
         
         valid_attempts.append(now)
@@ -400,76 +554,115 @@ def check_email_verification_quota() -> Tuple[bool, str]:
 # =============================================================================
 
 def initialize_firebase() -> Tuple[Optional[Any], Optional[Any]]:
-    """Inisialisasi Firebase Admin SDK dan Pyrebase"""
-    try:
-        # Cek apakah Firebase sudah diinisialisasi sebelumnya
-        if st.session_state.get('firebase_initialized', False):
-            firebase_auth = st.session_state.get('firebase_auth')
-            firestore_client = st.session_state.get('firestore')
-            
-            if firebase_auth and firestore_client:
-                logger.info("Using existing Firebase initialization")
-                return firebase_auth, firestore_client
-            else:
-                logger.warning("Firebase objects invalid, reinitializing...")
-                st.session_state['firebase_initialized'] = False
+    """
+    Inisialisasi Firebase Admin SDK dan Pyrebase dengan penanganan error yang lebih baik
+    dan logika percobaan ulang. Ambil semua konfigurasi dari st.secrets.
+    """
+    max_retries = 3
+    retry_delay = 1
+    
+    for attempt in range(max_retries):
+        try:
+            # Cek apakah Firebase sudah diinisialisasi sebelumnya
+            if st.session_state.get('firebase_initialized', False):
+                firebase_auth = st.session_state.get('firebase_auth')
+                firestore_client = st.session_state.get('firestore')
+                
+                # Validasi bahwa objects masih valid
+                if firebase_auth and firestore_client:
+                    logger.info("Using existing Firebase initialization")
+                    return firebase_auth, firestore_client
+                else:
+                    logger.warning("Firebase objects invalid, reinitializing...")
+                    st.session_state['firebase_initialized'] = False
 
-        # Verifikasi environment dan konfigurasi
-        if not verify_environment():
-            logger.error("Environment verification failed")
-            return None, None
+            # Verifikasi environment dan konfigurasi
+            if not verify_environment():
+                logger.error("Environment verification failed")
+                return None, None
+                
+            # Periksa konfigurasi Firebase terlebih dahulu
+            if "firebase" not in st.secrets:
+                logger.critical("Firebase configuration not found in secrets")
+                st.error("""
+                *🔥 Konfigurasi Firebase tidak ditemukan!*
+                
+                Aplikasi memerlukan konfigurasi Firebase service account untuk beroperasi.
+                Hubungi administrator sistem untuk konfigurasi yang diperlukan.
+                """)
+                return None, None
             
-        # Periksa konfigurasi Firebase
-        if "firebase" not in st.secrets:
-            logger.critical("Firebase configuration not found in secrets")
-            st.error("🔥 Konfigurasi Firebase tidak ditemukan!")
-            return None, None
-        
-        # Ambil konfigurasi service account
-        service_account = dict(st.secrets["firebase"])
-        
-        # Periksa field yang diperlukan
-        required_fields = ["project_id", "client_email", "private_key"]
-        missing_fields = [field for field in required_fields if field not in service_account]
-        
-        if missing_fields:
-            logger.critical(f"Missing Firebase config fields: {missing_fields}")
-            st.error(f"🔥 Konfigurasi Firebase tidak lengkap! Field yang diperlukan: {', '.join(missing_fields)}")
-            return None, None
-        
-        # Inisialisasi Firebase Admin SDK
-        if not firebase_admin._apps:
-            cred = credentials.Certificate(service_account)
-            firebase_admin.initialize_app(cred)
-            logger.info("Firebase Admin SDK initialized successfully")
-        
-        # Konfigurasi Pyrebase
-        config = get_firebase_config()
-        if not config:
-            logger.error("Failed to get Firebase configuration")
-            return None, None
-        
-        # Inisialisasi Pyrebase
-        pb = pyrebase.initialize_app(config)
-        firebase_auth = pb.auth()
-        logger.info("Pyrebase initialized successfully")
-        
-        # Inisialisasi Firestore client
-        firestore_client = firestore.client()
-        logger.info("Firestore client initialized successfully")
-        
-        # Simpan ke session state
-        st.session_state['firebase_auth'] = firebase_auth
-        st.session_state['firestore'] = firestore_client
-        st.session_state['firebase_initialized'] = True
-        
-        logger.info("Firebase initialized successfully")
-        return firebase_auth, firestore_client
-        
-    except Exception as e:
-        logger.critical(f"Firebase initialization failed: {str(e)}")
-        st.error(f"Gagal menginisialisasi Firebase: {str(e)}")
-        return None, None
+            # Ambil konfigurasi service account dari st.secrets
+            service_account = dict(st.secrets["firebase"])
+            
+            # Periksa field yang diperlukan untuk service account
+            required_fields = ["project_id", "client_email", "private_key"]
+            missing_fields = [field for field in required_fields if field not in service_account]
+            
+            if missing_fields:
+                logger.critical(f"Missing Firebase config fields: {missing_fields}")
+                st.error(f"""
+                *🔥 Konfigurasi Firebase tidak lengkap!*
+                
+                *Field yang diperlukan:* {', '.join(missing_fields)}
+                
+                Hubungi administrator sistem untuk melengkapi konfigurasi Firebase.
+                """)
+                return None, None
+            
+            # Inisialisasi Firebase Admin SDK menggunakan service account dari secrets
+            if not firebase_admin._apps:
+                cred = credentials.Certificate(service_account)
+                firebase_admin.initialize_app(cred)
+                logger.info("Firebase Admin SDK initialized successfully from secrets")
+            
+            # Konfigurasi Pyrebase menggunakan konfigurasi yang terstruktur
+            config = Config.get_firebase_config()
+            if not config:
+                logger.error("Failed to get Firebase configuration")
+                return None, None
+            
+            # Inisialisasi Pyrebase
+            pb = pyrebase.initialize_app(config)
+            firebase_auth = pb.auth()
+            logger.info("Pyrebase initialized successfully")
+            
+            # Inisialisasi Firestore client
+            firestore_client = firestore.client()
+            logger.info("Firestore client initialized successfully")
+            
+            # Simpan ke session state untuk penggunaan selanjutnya
+            st.session_state['firebase_auth'] = firebase_auth
+            st.session_state['firestore'] = firestore_client
+            st.session_state['firebase_initialized'] = True
+            
+            logger.info("Firebase initialized successfully (from secrets)")
+            return firebase_auth, firestore_client
+            
+        except Exception as e:
+            logger.error(f"Firebase initialization attempt {attempt + 1} failed: {str(e)}")
+            
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying Firebase initialization in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+                continue
+            else:
+                # Gagal setelah semua percobaan
+                logger.critical("Failed to initialize Firebase after all retries")
+                st.error(f"Gagal menginisialisasi Firebase setelah {max_retries} percobaan. Silakan periksa konfigurasi Anda.")
+                
+                # Tampilkan detail error untuk debugging
+                if "FIREBASE_API_KEY" in str(e):
+                    st.error("❌ *FIREBASE_API_KEY* tidak ditemukan atau tidak valid")
+                elif "project_id" in str(e):
+                    st.error("❌ *project_id* tidak ditemukan dalam konfigurasi Firebase")
+                elif "private_key" in str(e):
+                    st.error("❌ *private_key* tidak valid dalam konfigurasi Firebase")
+                
+                return None, None
+    
+    return None, None
 
 def send_email_verification_safe(firebase_auth: Any, id_token: str, email: str) -> Tuple[bool, str]:
     """Kirim verifikasi email dengan penanganan error yang komprehensif"""
@@ -517,8 +710,8 @@ def get_google_authorization_url() -> str:
     """Hasilkan URL otorisasi Google OAuth dengan cakupan yang diperlukan"""
     base_url = 'https://accounts.google.com/o/oauth2/v2/auth'
     params = {
-        'client_id': st.secrets.get("GOOGLE_CLIENT_ID", ""),
-        'redirect_uri': st.secrets.get("REDIRECT_URI", ""),
+        'client_id': Config.GOOGLE_CLIENT_ID,
+        'redirect_uri': Config.REDIRECT_URI,
         'response_type': 'code',
         'scope': 'openid email profile',
         'access_type': 'offline',
@@ -531,11 +724,11 @@ async def exchange_google_token(code: str) -> Tuple[Optional[str], Optional[Dict
     async with httpx.AsyncClient() as client:
         token_url = 'https://oauth2.googleapis.com/token'
         payload = {
-            'client_id': st.secrets.get("GOOGLE_CLIENT_ID", ""),
-            'client_secret': st.secrets.get("GOOGLE_CLIENT_SECRET", ""),
+            'client_id': Config.GOOGLE_CLIENT_ID,
+            'client_secret': Config.GOOGLE_CLIENT_SECRET,
             'code': code,
             'grant_type': 'authorization_code',
-            'redirect_uri': st.secrets.get("REDIRECT_URI", "")
+            'redirect_uri': Config.REDIRECT_URI
         }
 
         try:
@@ -777,7 +970,7 @@ def login_user(email: str, password: str, firebase_auth: Any, firestore_client: 
         
         # Step 2: Checking email verification status
         progress_container.progress(0.5)
-        message_container.caption("� Memeriksa status verifikasi email...")
+        message_container.caption("  Memeriksa status verifikasi email...")
         
         # Sync dan cek status verifikasi email dari Firebase Auth
         email_verified = sync_email_verified_to_firestore(firebase_auth, firestore_client, user)
@@ -916,7 +1109,7 @@ def register_user(first_name: str, last_name: str, email: str, password: str,
         
         # Buat user di Firebase Auth
         if is_google:
-            auto_password = f"Google-{secrets.token_hex(8)}"
+            auto_password = f"Google-{uuid.uuid4().hex[:16]}"
             user = firebase_auth.create_user_with_email_and_password(email, auto_password)
         else:
             user = firebase_auth.create_user_with_email_and_password(email, password)
@@ -1072,6 +1265,12 @@ def logout() -> None:
         st.session_state['user_email'] = None
         st.session_state["logout_success"] = True
         
+        # Reset model preparation status
+        st.session_state['models_prepared'] = False
+        st.session_state['model_preparation_started'] = False
+        st.session_state['model_preparation_completed'] = False
+        st.session_state['ready_for_tools'] = False
+        
         # Clear URL params
         st.query_params.clear()
         
@@ -1084,12 +1283,18 @@ def logout() -> None:
         logger.error(f"Logout failed: {str(e)}")
         show_error_toast(f"Logout failed: {str(e)}")
 
+# =============================================================================
+# UI FEEDBACK FUNCTIONS
+# =============================================================================
+
 def show_toast_notification(message: str, icon: str = "ℹ") -> None:
     """Tampilkan notifikasi toast dengan gaya yang konsisten"""
     try:
         st.toast(message, icon=icon)
+        logger.debug(f"Toast displayed: {icon} {message}")
     except Exception as e:
         logger.error(f"Failed to show toast: {e}")
+        # Fallback: tampilkan sebagai st.info jika toast gagal
         st.info(f"{icon} {message}")
 
 def show_success_toast(message: str) -> None:
@@ -1111,6 +1316,32 @@ def show_info_toast(message: str) -> None:
 def show_loading_toast(message: str) -> None:
     """Tampilkan notifikasi toast loading"""
     show_toast_notification(message, "⏳")
+
+# =============================================================================
+# ENHANCED LOADING AND FEEDBACK FUNCTIONS
+# =============================================================================
+
+def create_auth_spinner_context(message: str, success_message: str = ""):
+    """Context manager untuk spinner autentikasi dengan feedback yang konsisten"""
+    class AuthSpinnerContext:
+        def __init__(self, msg: str, success_msg: str):
+            self.message = msg
+            self.success_message = success_msg
+            self.spinner = None
+            
+        def __enter__(self):
+            self.spinner = st.spinner(self.message)
+            self.spinner.__enter__()
+            return self
+            
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            if self.spinner:
+                self.spinner.__exit__(exc_type, exc_val, exc_tb)
+            if exc_type is None and self.success_message:
+                show_loading_toast(self.success_message)
+                time.sleep(0.3)  # Brief pause untuk user feedback
+    
+    return AuthSpinnerContext(message, success_message)
 
 def display_auth_tips(auth_type: str) -> None:
     """Tampilkan tips berguna berdasarkan jenis autentikasi"""
@@ -1136,6 +1367,104 @@ def display_auth_tips(auth_type: str) -> None:
         with st.expander("💡 Tips Berguna", expanded=False):
             for tip in tips[auth_type]:
                 st.markdown(f"• {tip}")
+
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
+
+def display_config_debug_info() -> None:
+    """Tampilkan informasi debug konfigurasi (hanya untuk development)"""
+    # Aktifkan debug mode jika query parameter ?debug=1 ada
+    if st.query_params.get('debug') == '1':
+        st.session_state['debug_mode'] = True
+    
+    if st.session_state.get('debug_mode', False):
+        with st.expander("🔧 Configuration Debug", expanded=False):
+            debug_info = {
+                "config_valid": Config.is_valid(),
+                "config_type": type(Config).__name__,
+                "session_timeout": Config.SESSION_TIMEOUT,
+                "max_login_attempts": Config.MAX_LOGIN_ATTEMPTS,
+                "rate_limit_window": Config.RATE_LIMIT_WINDOW,
+                "email_verification_limit": Config.EMAIL_VERIFICATION_LIMIT,
+                "remember_me_duration_days": Config.REMEMBER_ME_DURATION // (24*60*60),
+                "last_email_duration_days": Config.LAST_EMAIL_DURATION // (24*60*60),
+                "firebase_initialized": st.session_state.get('firebase_initialized', False),
+                "logged_in": st.session_state.get('logged_in', False),
+                "user_email": st.session_state.get('user_email', 'None'),
+                "login_attempts": st.session_state.get('login_attempts', 0),
+                "has_google_client_id": bool(Config.GOOGLE_CLIENT_ID),
+                "has_firebase_api_key": bool(Config.FIREBASE_API_KEY),
+                "has_redirect_uri": bool(Config.REDIRECT_URI)
+            }
+            st.json(debug_info)
+            
+            # Tombol untuk clear debug mode
+            if st.button("Clear Debug Mode"):
+                st.session_state['debug_mode'] = False
+                st.rerun()
+
+def validate_app_configuration() -> Tuple[bool, list]:
+    """
+    Validasi konfigurasi aplikasi secara menyeluruh
+    
+    Returns:
+        Tuple[is_valid, list_of_issues]
+    """
+    issues = []
+    
+    # Cek konfigurasi dasar
+    if not Config.is_valid():
+        issues.append("Konfigurasi Firebase/Google OAuth tidak lengkap")
+    
+    # Cek Firebase configuration
+    firebase_config = Config.get_firebase_config()
+    if not firebase_config:
+        issues.append("Konfigurasi Firebase tidak dapat dimuat")
+    
+    # Cek secrets yang diperlukan
+    required_secrets = ["firebase", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "REDIRECT_URI", "FIREBASE_API_KEY"]
+    for secret in required_secrets:
+        if secret not in st.secrets:
+            issues.append(f"Secret '{secret}' tidak ditemukan")
+    
+    # Cek konfigurasi numerik
+    numeric_configs = [
+        ("SESSION_TIMEOUT", Config.SESSION_TIMEOUT),
+        ("MAX_LOGIN_ATTEMPTS", Config.MAX_LOGIN_ATTEMPTS),
+        ("RATE_LIMIT_WINDOW", Config.RATE_LIMIT_WINDOW),
+        ("EMAIL_VERIFICATION_LIMIT", Config.EMAIL_VERIFICATION_LIMIT)
+    ]
+    
+    for name, value in numeric_configs:
+        if not isinstance(value, (int, float)) or value <= 0:
+            issues.append(f"Konfigurasi {name} tidak valid: {value}")
+    
+    return len(issues) == 0, issues
+
+def get_config_summary() -> Dict[str, Any]:
+    """
+    Dapatkan ringkasan konfigurasi untuk logging dan debugging
+    
+    Returns:
+        Dictionary dengan informasi konfigurasi
+    """
+    return {
+        "config_class": type(Config).__name__,
+        "is_valid": Config.is_valid(),
+        "timeout_settings": {
+            "session_timeout_hours": Config.SESSION_TIMEOUT / 3600,
+            "rate_limit_window_minutes": Config.RATE_LIMIT_WINDOW / 60,
+            "remember_me_duration_days": Config.REMEMBER_ME_DURATION / (24*60*60)
+        },
+        "limits": {
+            "max_login_attempts": Config.MAX_LOGIN_ATTEMPTS,
+            "email_verification_limit": Config.EMAIL_VERIFICATION_LIMIT
+        },
+        "oauth_configured": bool(Config.GOOGLE_CLIENT_ID and Config.GOOGLE_CLIENT_SECRET),
+        "firebase_configured": bool(Config.FIREBASE_API_KEY),
+        "redirect_configured": bool(Config.REDIRECT_URI)
+    }
 
 # =============================================================================
 # UI COMPONENTS
@@ -1177,12 +1506,13 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
 
         # Checkbox remember me
         col1, col2 = st.columns([1, 2])
-        with col1:        remember = st.checkbox(
-            "Ingat saya", 
-            value=True, 
-            help=f"Simpan login selama {REMEMBER_ME_DURATION // (24*60*60)} hari",
-            disabled=not app_ready
-        )
+        with col1:
+            remember = st.checkbox(
+                "Ingat saya", 
+                value=True, 
+                help=f"Simpan login selama {Config.REMEMBER_ME_DURATION // (24*60*60)} hari",
+                disabled=not app_ready
+            )
 
         # Status app readiness
         if not app_ready:
@@ -1266,7 +1596,7 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             
             # Simpan email terakhir untuk kemudahan
             try:
-                cookie_controller.set('last_email', email_clean, max_age=LAST_EMAIL_DURATION)
+                cookie_controller.set('last_email', email_clean, max_age=Config.LAST_EMAIL_DURATION)
             except Exception as e:
                 logger.warning(f"Failed to save last email: {e}")
             
@@ -1403,7 +1733,7 @@ def display_register_form(firebase_auth: Any, firestore_client: Any) -> None:
             password = st.text_input(
                 "Kata Sandi (Dibuat otomatis untuk akun Google)",
                 type="password",
-                value=f"Google-{secrets.token_hex(4)}",
+                value=f"Google-{uuid.uuid4().hex[:8]}",
                 disabled=True
             )
             confirm_password = password
@@ -1561,6 +1891,8 @@ def tampilkan_header_sambutan():
 
 def tampilkan_pilihan_autentikasi(firebase_auth, firestore_client):
     """Menampilkan selectbox pilihan metode autentikasi"""
+    previous_auth_type = st.session_state.get('auth_type', '')
+    
     # Tampilkan selectbox untuk memilih metode autentikasi
     auth_type = st.selectbox(
         "Pilih metode autentikasi",
@@ -1568,6 +1900,13 @@ def tampilkan_pilihan_autentikasi(firebase_auth, firestore_client):
         index=0,
         help="Pilih metode autentikasi Anda"
     )
+    
+    # Reset form data jika tipe auth berubah
+    if previous_auth_type != auth_type:
+        st.session_state['auth_type'] = auth_type
+        st.session_state['auth_type_changed'] = True
+        if 'register_form_data' in st.session_state:
+            del st.session_state['register_form_data']
     
     # Tampilkan form sesuai pilihan
     if auth_type == "🔐 Masuk":
@@ -1588,12 +1927,24 @@ def main() -> None:
         sync_login_state()
         initialize_session_state()
         
-        logger.info("Application started")
+        # Validasi konfigurasi aplikasi
+        config_valid, config_issues = validate_app_configuration()
+        if not config_valid:
+            logger.warning(f"Configuration issues detected: {config_issues}")
+        
+        # Log configuration summary
+        config_summary = get_config_summary()
+        logger.info(f"Application started with config: {config_summary}")
+        
+        # Tampilkan debug info jika diminta
+        if st.query_params.get('debug') == '1':
+            display_config_debug_info()
         
         # CSS Styles
         st.markdown("""
             <style>
             /* Reset dan viewport configuration */
+
             html, body {
                 height: 100vh !important;
                 max-height: 100vh !important;
@@ -1736,33 +2087,33 @@ def main() -> None:
         # Clear initialization message setelah selesai
         initialization_container.empty()
         
-        # Verifikasi Firebase berhasil diinisialisasi
-        if not (firebase_auth and firestore_client):
-            logger.error("Firebase initialization failed")
-            st.error("🔥 *Kesalahan Konfigurasi Firebase*")
-            st.error("""
-            *Aplikasi tidak dapat berjalan tanpa konfigurasi Firebase yang valid.*
-            
-            Silakan pastikan:
-            • File .streamlit/secrets.toml tersedia dan lengkap
-            • Konfigurasi Firebase service account benar
-            • Semua kredensial telah dikonfigurasi dengan benar
-            
-            Hubungi administrator sistem untuk bantuan konfigurasi.
-            """)
-            return
+        # Verifikasi Firebase berhasil diinisialisasi (log hanya sekali per session)
+        if firebase_auth and firestore_client:
+            if not st.session_state.get('firebase_ready_logged'):
+                logger.info("[AUTH][FIREBASE] Firebase successfully initialized and ready")
+                st.session_state['firebase_ready_logged'] = True
+        else:
+            if not st.session_state.get('firebase_failed_logged'):
+                logger.error("[AUTH][FIREBASE] Firebase initialization failed")
+                st.session_state['firebase_failed_logged'] = True
 
-        # Cek status login
-        if firebase_auth and firestore_client and st.session_state.get('logged_in', False):
+        # Cek status login (hanya jika Firebase tersedia dan user sudah login)
+        if firebase_auth and firestore_client and st.session_state.get('logged_in', False) and not st.session_state.get('force_auth_page', False):
             if check_session_timeout():
                 user_email = st.session_state.get('user_email')
                 if user_email and verify_user_exists(user_email, firestore_client):
-                    logger.info(f"User authenticated: {user_email}")
+                    if not st.session_state.get('user_authenticated_logged'):
+                        logger.info(f"[AUTH][SESSION] User authenticated | email={user_email}")
+                        st.session_state['user_authenticated_logged'] = True
+                    # User terautentikasi, keluar dari fungsi auth
                     return
                 else:
-                    logger.warning(f"User verification failed: {user_email}")
+                    if not st.session_state.get('user_verification_failed_logged'):
+                        logger.warning(f"[AUTH][SESSION] User verification failed, force logout | email={user_email}")
+                        st.session_state['user_verification_failed_logged'] = True
                     st.error("Masalah autentikasi terdeteksi. Silakan login kembali.")
                     logout()
+                    st.session_state['force_auth_page'] = True
                     st.rerun()
         # Tampilkan UI autentikasi dalam container yang tepat
         with st.container():
@@ -1771,10 +2122,11 @@ def main() -> None:
 
             # Handle logout message
             if st.query_params.get("logout") == "1":
-                logger.info("User logged out")
+                if not st.session_state.get('logout_logged'):
+                    logger.info("[AUTH][LOGOUT] User logged out via query param")
+                    st.session_state['logout_logged'] = True
                 st.toast("Anda telah berhasil logout.", icon="✅")
                 st.query_params.clear()
-                
             # Handle Google OAuth callback atau tampilkan form autentikasi
             if firebase_auth and firestore_client:
                 # Handle Google OAuth callback jika ada
@@ -1784,8 +2136,8 @@ def main() -> None:
                 if not st.session_state.get('logged_in', False):
                     tampilkan_pilihan_autentikasi(firebase_auth, firestore_client)
             else:
-                # Firebase tidak tersedia - tampilkan error konfigurasi
-                logger.error("Firebase unavailable - configuration error")
+                # Firebase tidak tersedia - tampilkan error konfigurasi untuk produksi
+                logger.error("[AUTH][FIREBASE] Firebase unavailable - configuration error")
                 st.error("🔥 *Kesalahan Konfigurasi Firebase*")
                 st.error("""
                 *Aplikasi tidak dapat berjalan tanpa konfigurasi Firebase yang valid.*
@@ -1802,11 +2154,11 @@ def main() -> None:
             st.markdown('</div>', unsafe_allow_html=True)
 
     except Exception as e:
-        logger.critical(f"Unhandled exception: {str(e)}")
+        logger.critical(f"[AUTH][CRASH] Unhandled exception: {str(e)}", exc_info=True)
         st.error("Terjadi kesalahan yang tidak terduga. Silakan coba lagi nanti.")
         st.session_state.clear()
         initialize_session_state()
         st.rerun()
 
-if __name__ == "__main__":
+if __name__ == "_main_":
     main()
