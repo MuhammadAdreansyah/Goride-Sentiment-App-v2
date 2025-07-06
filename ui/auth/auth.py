@@ -819,7 +819,7 @@ def login_user(email: str, password: str, firebase_auth: Any, firestore_client: 
         
         # Step 4: Complete
         progress_container.progress(1.0)
-        message_container.caption("✅ Login berhasil!")
+        # message_container.caption("✅ Login berhasil!")
         message_container.success("🎉 Login berhasil! Selamat datang kembali!")
         
         logger.info(f"Login successful for: {email}")
@@ -828,6 +828,7 @@ def login_user(email: str, password: str, firebase_auth: Any, firestore_client: 
         # Clear progress setelah menampilkan pesan sukses, tapi biarkan message tetap
         time.sleep(1.2)  # Beri waktu untuk menampilkan progress completion
         progress_container.empty()
+        message_container.empty()
         return True
         
     except Exception as e:
