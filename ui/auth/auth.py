@@ -209,6 +209,69 @@ def clear_remember_me_cookies() -> None:
 
 # =============================================================================
 # =============================================================================
+# PROGRESS AND UI MANAGEMENT
+# =============================================================================
+
+def create_progress_manager(container_placeholder: Any) -> Dict[str, Any]:
+    """Create a progress manager untuk handling progress dan message secara konsisten"""
+    progress_container = container_placeholder.empty()
+    message_container = container_placeholder.empty()
+    
+    return {
+        'placeholder': container_placeholder,
+        'progress': progress_container,
+        'message': message_container
+    }
+
+def update_progress(manager: Dict[str, Any], progress: float, message: str) -> None:
+    """Update progress bar dan message secara konsisten"""
+    if manager and 'progress' in manager and 'message' in manager:
+        manager['progress'].progress(progress)
+        manager['message'].caption(message)
+
+def clear_progress(manager: Dict[str, Any], keep_message: bool = False) -> None:
+    """Clear progress container, optionally keep message"""
+    if manager and 'progress' in manager:
+        manager['progress'].empty()
+        if not keep_message and 'message' in manager:
+            manager['message'].empty()
+
+def show_success_message(manager: Dict[str, Any], message: str, clear_after: float = 1.2) -> None:
+    """Show success message dengan auto-clear"""
+    if manager and 'message' in manager:
+        manager['message'].success(message)
+        if clear_after > 0:
+            time.sleep(clear_after)
+            manager['message'].empty()
+
+def show_error_message(manager: Dict[str, Any], message: str) -> None:
+    """Show error message"""
+    if manager and 'message' in manager:
+        manager['message'].error(message)
+
+def show_warning_message(manager: Dict[str, Any], message: str) -> None:
+    """Show warning message"""
+    if manager and 'message' in manager:
+        manager['message'].warning(message)
+
+def show_info_message(manager: Dict[str, Any], message: str) -> None:
+    """Show info message"""
+    if manager and 'message' in manager:
+        manager['message'].info(message)
+
+def handle_validation_display(manager: Dict[str, Any], errors: list) -> None:
+    """Handle validation errors display secara konsisten"""
+    if not errors or not manager:
+        return
+    
+    clear_progress(manager)
+    
+    error_message = "**❌ Data tidak valid:**\n\n" + "\n".join(f"• {error}" for error in errors)
+    show_error_message(manager, error_message)
+    show_error_toast("Data tidak valid")
+
+# =============================================================================
+# =============================================================================
 # CENTRALIZED ERROR HANDLING
 # =============================================================================
 
@@ -241,25 +304,20 @@ def handle_firebase_error(error: Exception, context: str = "") -> Tuple[str, str
     else:
         return f"{context.title()} gagal", f"{context.title()} gagal: {str(error)}"
 
-def show_error_with_context(error: Exception, context: str, progress_container: Any = None, message_container: Any = None) -> None:
+def show_error_with_context(error: Exception, context: str, manager: Optional[Dict[str, Any]] = None) -> None:
     """Tampilkan error dengan konteks dan UI feedback yang konsisten"""
     toast_msg, detailed_msg = handle_firebase_error(error, context)
     
-    # Clear progress jika ada
-    if progress_container:
+    # Clear progress jika ada manager
+    if manager:
+        clear_progress(manager)
+        show_error_message(manager, f"❌ {detailed_msg}")
+    else:
+        # Fallback ke st.error jika tidak ada manager
         try:
-            progress_container.empty()
-        except:
-            pass
-    
-    # Tampilkan pesan error
-    try:
-        if message_container:
-            message_container.error(f"❌ {detailed_msg}")
-        else:
             st.error(f"❌ {detailed_msg}")
-    except:
-        st.write(f"❌ {detailed_msg}")
+        except:
+            st.write(f"❌ {detailed_msg}")
     
     # Tampilkan toast
     show_error_toast(toast_msg)
@@ -267,24 +325,30 @@ def show_error_with_context(error: Exception, context: str, progress_container: 
     # Log error
     logger.error(f"{context.title()} failed: {str(error)}")
 
-def handle_validation_errors(errors: list, progress_container: Any = None, message_container: Any = None) -> None:
+def handle_validation_errors(errors: list, manager: Optional[Dict[str, Any]] = None, 
+                           progress_container: Any = None, message_container: Any = None) -> None:
     """Handle validation errors dengan display yang konsisten"""
     if not errors:
         return
     
-    if progress_container:
-        progress_container.empty()
-    
-    if message_container:
-        message_container.error("❌ Validasi data gagal:")
-        for error in errors:
-            message_container.error(error)
+    # Use new manager if provided
+    if manager:
+        handle_validation_display(manager, errors)
+    # Fallback to old containers for backward compatibility
+    elif progress_container and message_container:
+        temp_manager = {
+            'progress': progress_container, 
+            'message': message_container
+        }
+        handle_validation_display(temp_manager, errors)
     else:
+        # Final fallback
         st.error("❌ Validasi data gagal:")
         for error in errors:
             st.error(error)
+        show_error_toast("Data tidak valid")
     
-    show_error_toast("Data tidak valid")
+    logger.warning(f"Validation failed: {'; '.join(errors)}")
     logger.warning(f"Validation failed: {'; '.join(errors)}")
 
 def validate_email_format(email: str) -> Tuple[bool, str]:
@@ -769,15 +833,17 @@ def login_user(email: str, password: str, firebase_auth: Any, firestore_client: 
     
     try:
         # Step 1: Validating credentials
-        progress_container.progress(0.2)
+        progress_container.progress(0.1)
         message_container.caption("🔐 Memvalidasi kredensial...")
+        time.sleep(0.3)  # Brief pause untuk visibilitas
         
         # Coba login dengan Firebase
         user = firebase_auth.sign_in_with_email_and_password(email, password)
         
         # Step 2: Checking email verification status
-        progress_container.progress(0.5)
-        message_container.caption("� Memeriksa status verifikasi email...")
+        progress_container.progress(0.4)
+        message_container.caption("📧 Memeriksa status verifikasi email...")
+        time.sleep(0.2)  # Brief pause untuk visibilitas
         
         # Sync dan cek status verifikasi email dari Firebase Auth
         email_verified = sync_email_verified_to_firestore(firebase_auth, firestore_client, user)
@@ -797,6 +863,7 @@ def login_user(email: str, password: str, firebase_auth: Any, firestore_client: 
         # Step 3: Verifying user data
         progress_container.progress(0.7)
         message_container.caption("👤 Memverifikasi data pengguna...")
+        time.sleep(0.2)  # Brief pause untuk visibilitas
         
         # Verifikasi pengguna ada di Firestore
         if not verify_user_exists(email, firestore_client):
@@ -804,9 +871,11 @@ def login_user(email: str, password: str, firebase_auth: Any, firestore_client: 
             show_error_toast("Data pengguna tidak ditemukan")
             message_container.error("Data pengguna tidak ditemukan di sistem. Silakan hubungi administrator.")
             return False
-        # Step 3: Setting up session
+        
+        # Step 4: Setting up session
         progress_container.progress(0.9)
         message_container.caption("⚙️ Menyiapkan sesi pengguna...")
+        time.sleep(0.2)  # Brief pause untuk visibilitas
         
         # Set status login
         st.session_state['logged_in'] = True
@@ -819,16 +888,12 @@ def login_user(email: str, password: str, firebase_auth: Any, firestore_client: 
         
         # Step 4: Complete
         progress_container.progress(1.0)
-        # message_container.caption("✅ Login berhasil!")
         message_container.success("🎉 Login berhasil! Selamat datang kembali!")
         
         logger.info(f"Login successful for: {email}")
         show_success_toast("Login berhasil! Selamat datang kembali!")
         
-        # Clear progress setelah menampilkan pesan sukses, tapi biarkan message tetap
-        time.sleep(1.2)  # Beri waktu untuk menampilkan progress completion
-        progress_container.empty()
-        message_container.empty()
+        # Return immediately, clearing akan di-handle di level atas
         return True
         
     except Exception as e:
@@ -857,7 +922,8 @@ def login_user(email: str, password: str, firebase_auth: Any, firestore_client: 
             return False
         else:
             # Gunakan centralized error handling untuk error lainnya
-            show_error_with_context(e, "login", progress_container, message_container)
+            temp_manager = {'progress': progress_container, 'message': message_container}
+            show_error_with_context(e, "login", temp_manager)
             return False
 
 def register_user(first_name: str, last_name: str, email: str, password: str, 
@@ -893,7 +959,8 @@ def register_user(first_name: str, last_name: str, email: str, password: str,
             validation_errors.append(f"❌ {password_message}")
     
     if validation_errors:
-        handle_validation_errors(validation_errors, progress_container, message_container)
+        temp_manager = {'progress': progress_container, 'message': message_container}
+        handle_validation_errors(validation_errors, temp_manager)
         return False, "\n".join(validation_errors)
     
     try:
@@ -977,7 +1044,8 @@ def register_user(first_name: str, last_name: str, email: str, password: str,
         return True, success_message
                 
     except Exception as e:
-        show_error_with_context(e, "register", progress_container, message_container)
+        temp_manager = {'progress': progress_container, 'message': message_container}
+        show_error_with_context(e, "register", temp_manager)
         return False, f"❌ Pendaftaran gagal: {str(e)}"
 
 def reset_password(email: str, firebase_auth: Any, progress_container: Any, message_container: Any) -> bool:
@@ -1043,7 +1111,8 @@ def reset_password(email: str, firebase_auth: Any, progress_container: Any, mess
         return True
         
     except Exception as e:
-        show_error_with_context(e, "reset", progress_container, message_container)
+        temp_manager = {'progress': progress_container, 'message': message_container}
+        show_error_with_context(e, "reset", temp_manager)
         return False
 
 def logout() -> None:
@@ -1147,7 +1216,7 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
     
     # Check app readiness
     app_ready = is_app_ready()
-    
+
     with st.form("login_form", clear_on_submit=False):
         st.markdown("### Masuk")
 
@@ -1178,12 +1247,13 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
 
         # Checkbox remember me
         col1, col2 = st.columns([1, 2])
-        with col1:        remember = st.checkbox(
-            "Ingat saya", 
-            value=True, 
-            help=f"Simpan login selama {REMEMBER_ME_DURATION // (24*60*60)} hari",
-            disabled=not app_ready
-        )
+        with col1:
+            remember = st.checkbox(
+                "Ingat saya", 
+                value=True, 
+                help=f"Simpan login selama {REMEMBER_ME_DURATION // (24*60*60)} hari",
+                disabled=not app_ready
+            )
 
         # Status app readiness
         if not app_ready:
@@ -1213,122 +1283,106 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             type="primary",
             disabled=not app_ready
         )
-        
-        # Placeholder untuk pesan feedback dan progress di bawah tombol Google
+
+        # Placeholder untuk pesan feedback dan progress di dalam form
         feedback_placeholder = st.empty()
 
-    # Tampilkan pesan error Google OAuth jika ada - di placeholder yang konsisten
+    # Tampilkan pesan error Google OAuth jika ada - di atas form
     if st.session_state.get('google_auth_error', False):
         email_error = st.session_state.get('google_auth_email', '')
-        with feedback_placeholder.container():
-            st.error(f"**Akun Google Tidak Terdaftar**\n\n"
-                    f"Akun Google {email_error} belum terdaftar dalam sistem kami.")
-            st.info(f"💡 **Saran:** Silakan daftar terlebih dahulu menggunakan tab 'Daftar' atau gunakan akun email yang sudah terdaftar.")
+        st.error(f"**Akun Google Tidak Terdaftar**\n\n"
+                f"Akun Google {email_error} belum terdaftar dalam sistem kami.")
+        st.info(f"💡 **Saran:** Silakan daftar terlebih dahulu menggunakan tab 'Daftar' atau gunakan akun email yang sudah terdaftar.")
         show_error_toast(f"Akun Google {email_error} tidak terdaftar dalam sistem kami.")
         del st.session_state['google_auth_error']
         if 'google_auth_email' in st.session_state:
             del st.session_state['google_auth_email']
 
-    # Tampilkan pesan error verifikasi Google OAuth jika ada - di placeholder yang konsisten
+    # Tampilkan pesan error verifikasi Google OAuth jika ada - di atas form
     if st.session_state.get('google_auth_verification_error', False):
         email_error = st.session_state.get('google_auth_email', '')
-        with feedback_placeholder.container():
-            st.warning(
-                f"📧 **Email Anda belum diverifikasi!**\n\n"
-                f"Email {email_error} belum diverifikasi. "
-                f"Silakan periksa kotak masuk email Anda dan klik link verifikasi yang telah dikirim. "
-                f"Setelah verifikasi, silakan coba login kembali.\n\n"
-                f"💡 *Tip: Periksa juga folder spam/junk email*"
-            )
+        st.warning(
+            f"📧 **Email Anda belum diverifikasi!**\n\n"
+            f"Email {email_error} belum diverifikasi. "
+            f"Silakan periksa kotak masuk email Anda dan klik link verifikasi yang telah dikirim. "
+            f"Setelah verifikasi, silakan coba login kembali.\n\n"
+            f"💡 *Tip: Periksa juga folder spam/junk email*"
+        )
         show_warning_toast("Email belum diverifikasi")
         del st.session_state['google_auth_verification_error']
         if 'google_auth_email' in st.session_state:
             del st.session_state['google_auth_email']
 
+
     # Handle tombol login email di luar form
     if email_login_clicked:
+        # Clear any existing content in feedback placeholder
+        feedback_placeholder.empty()
+        
         if email and password:
             # Validasi ulang email sebelum proses login
             email_clean = email.strip()
             is_valid_email, email_message = validate_email_format(email_clean)
-            
             if not is_valid_email:
                 with feedback_placeholder.container():
                     st.error(f"❌ {email_message}")
-                    show_error_toast("Format email tidak valid")
+                show_error_toast("Format email tidak valid")
                 return
-            
             # Pastikan Firebase sudah siap
             if not firebase_auth or not firestore_client:
                 with feedback_placeholder.container():
                     st.error("❌ Sistem belum siap. Silakan tunggu beberapa detik dan coba lagi.")
-                    show_error_toast("Sistem belum siap")
+                show_error_toast("Sistem belum siap")
                 return
-            
             # Simpan email terakhir untuk kemudahan
             try:
                 cookie_controller.set('last_email', email_clean, max_age=LAST_EMAIL_DURATION)
             except Exception as e:
                 logger.warning(f"Failed to save last email: {e}")
             
-            # Tampilkan progress di placeholder yang konsisten
+            # Proses login dengan progress steps yang konsisten seperti register
             with feedback_placeholder.container():
                 progress_container = st.empty()
                 message_container = st.empty()
                 
-                # Progress indicator
-                progress_container.progress(0.1)
+                # Progress indicator awal
+                progress_container.progress(0.05)
                 message_container.caption("🔐 Memulai proses login...")
                 
                 # Proses login dengan email yang sudah divalidasi
-                try:
-                    result = login_user(email_clean, password, firebase_auth, firestore_client, remember, progress_container, message_container)
-                    if result:
-                                # Clear progress setelah login berhasil, tapi biarkan message tetap
-                        progress_container.empty()
-                        st.rerun()
-                except Exception as login_error:
-                    # Fallback error handling jika login_user tidak menampilkan error
+                result = login_user(email_clean, password, firebase_auth, firestore_client, 
+                                  remember, progress_container, message_container)
+                if result:
+                    # Login berhasil, clear containers sebelum rerun
+                    time.sleep(0.5)  # Brief pause
                     progress_container.empty()
-                    logger.error(f"Login process failed: {login_error}")
-                    
-                    error_str = str(login_error).upper()
-                    if "INVALID_LOGIN_CREDENTIALS" in error_str:
-                        show_error_toast(f"Email {email_clean} tidak terdaftar dalam sistem kami")
-                        message_container.error(
-                            f"**Akun Email Tidak Terdaftar**\n\n"
-                            f"Email {email_clean} belum terdaftar dalam sistem kami."
-                        )
-                        message_container.info(
-                            f"💡 **Saran:** Silakan daftar terlebih dahulu menggunakan tab 'Daftar' "
-                            f"atau periksa ejaan email Anda."
-                        )
-                    else:
-                        show_error_toast("Login gagal")
-                        message_container.error(f"❌ Login gagal: {str(login_error)}")
+                    message_container.empty()
+                    st.rerun()
         else:
             with feedback_placeholder.container():
                 st.warning("⚠️ Silakan isi kolom email dan kata sandi.")
             show_warning_toast("Silakan isi kolom email dan kata sandi.")
 
-    # Handle tombol login Google di luar form  
+
+    # Handle tombol login Google di luar form
     if google_login_clicked:
+        # Clear any existing content in feedback placeholder
+        feedback_placeholder.empty()
+        
         with feedback_placeholder.container():
             progress_container = st.empty()
             message_container = st.empty()
             
             progress_container.progress(0.1)
             message_container.caption("🔗 Mengalihkan ke Google OAuth...")
-            
             try:
                 google_url = get_google_authorization_url()
                 progress_container.progress(0.8)
                 message_container.caption("✅ Berhasil mengalihkan ke Google...")
-                # Clear progress sebelum redirect, tapi biarkan message tetap
-                time.sleep(0.5)  # Beri waktu untuk melihat progress completion
+                time.sleep(0.5)
                 progress_container.empty()
                 st.markdown(f'<meta http-equiv="refresh" content="0; url={google_url}">', unsafe_allow_html=True)
-                time.sleep(1)  # Beri waktu untuk redirect
+                time.sleep(1)
             except Exception as e:
                 logger.error(f"Google OAuth redirect failed: {e}")
                 progress_container.empty()

@@ -871,14 +871,11 @@ def render_data_analysis() -> None:
     preprocess_options = create_preprocessing_options_ui()
     
     # Analysis button
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        analyze_button = st.button(
-            "🔍 Mulai Analisis Sentimen",
-            type="primary",
-            disabled=uploaded_file is None,
-            use_container_width=True
-        )
+    analyze_button = st.button(
+        "🔍 Mulai Analisis Sentimen",
+        type="primary",
+        disabled=uploaded_file is None
+    )
     
     # Handle file processing
     if uploaded_file is not None and analyze_button:
