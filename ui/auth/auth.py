@@ -642,11 +642,9 @@ def handle_google_login_callback() -> bool:
         callback_message = st.empty()
         
         with callback_progress.container():
-            progress_container = st.empty()
             message_container = st.empty()
             
-            # Step 1: Token exchange
-            progress_container.progress(0.2)
+            # Step 1: Memproses token Google
             message_container.caption("🔄 Memproses token Google...")
             
             async def async_token_exchange():
@@ -654,37 +652,29 @@ def handle_google_login_callback() -> bool:
 
             user_email, user_info = asyncio.run(async_token_exchange())
             if not user_email or not user_info:
-                progress_container.empty()
                 message_container.error("❌ Gagal mendapatkan informasi pengguna dari Google")
                 show_error_toast("Gagal memproses login Google")
                 return False
 
-            # Step 2: Firebase initialization
-            progress_container.progress(0.4)
+            # Step 2: Menginisialisasi Firebase
             message_container.caption("🔥 Menginisialisasi Firebase...")
             
             # Verifikasi pengguna ada di sistem
             firebase_auth, firestore_client = initialize_firebase()
             if not firebase_auth or not firestore_client:
-                progress_container.empty()
                 message_container.error("❌ Gagal menginisialisasi Firebase")
                 show_error_toast("Gagal menginisialisasi sistem")
                 return False
             
-            # Step 3: User verification
-            progress_container.progress(0.6)
-            message_container.caption("👤 Memverifikasi pengguna...")
-            
             try:
+                # Step 3: Memverifikasi pengguna
+                message_container.caption("👤 Memverifikasi pengguna...")
+                
                 # Cek apakah user sudah terdaftar
                 firebase_user = auth.get_user_by_email(user_email)
                 user_doc = firestore_client.collection('users').document(firebase_user.uid).get()
                 
                 if user_doc.exists:
-                    # Step 4: Processing login
-                    progress_container.progress(0.8)
-                    message_container.caption("🔐 Memproses login...")
-                    
                     # User ada, cek verifikasi email untuk keamanan ekstra
                     user_data = user_doc.to_dict()
                     is_google_user = user_data.get('auth_provider') == 'google'
@@ -692,6 +682,9 @@ def handle_google_login_callback() -> bool:
                     
                     # User Google atau email sudah verified, login berhasil
                     if is_google_user or is_email_verified:
+                        # Step 4: Memproses login
+                        message_container.caption("🔐 Memproses login...")
+                        
                         # Update status verifikasi untuk user Google jika belum ter-set
                         if is_google_user and not is_email_verified:
                             try:
@@ -703,10 +696,6 @@ def handle_google_login_callback() -> bool:
                             except Exception as update_error:
                                 logger.warning(f"Failed to update email verification for Google user {user_email}: {update_error}")
                         
-                        # Step 5: Complete
-                        progress_container.progress(1.0)
-                        message_container.caption("✅ Login Google berhasil!")
-                        
                         st.session_state['logged_in'] = True
                         st.session_state['user_email'] = user_email
                         st.session_state['login_time'] = datetime.now()
@@ -714,9 +703,11 @@ def handle_google_login_callback() -> bool:
                         
                         logger.info(f"Google login successful for: {user_email}")
                         
+                        # Step 5: Login berhasil
+                        message_container.caption("✅ Login Google berhasil!")
+                        
                         # Clear progress dan tampilkan pesan sukses
                         time.sleep(1.0)
-                        progress_container.empty()
                         message_container.success("🎉 Login Google berhasil! Selamat datang!")
                         show_success_toast("Login Google berhasil!")
                         
@@ -726,7 +717,6 @@ def handle_google_login_callback() -> bool:
                         return True
                     else:
                         # Email belum diverifikasi untuk user non-Google
-                        progress_container.empty()
                         message_container.warning(
                             f"📧 **Email Anda belum diverifikasi!**\n\n"
                             f"Email {user_email} belum diverifikasi. "
@@ -743,7 +733,6 @@ def handle_google_login_callback() -> bool:
                         return False
                 else:
                     # User tidak ada di Firestore, arahkan ke registrasi
-                    progress_container.empty()
                     message_container.error(
                         f"**Akun Google Tidak Terdaftar**\n\n"
                         f"Akun Google {user_email} belum terdaftar dalam sistem kami."
@@ -763,7 +752,6 @@ def handle_google_login_callback() -> bool:
 
             except auth.UserNotFoundError:
                 # User tidak ada di Firebase Auth, arahkan ke registrasi
-                progress_container.empty()
                 message_container.error(
                     f"**Akun Google Tidak Terdaftar**\n\n"
                     f"Akun Google {user_email} belum terdaftar dalam sistem kami."
@@ -816,40 +804,36 @@ def login_user(email: str, password: str, firebase_auth: Any, firestore_client: 
                remember: bool, progress_container: Any, message_container: Any) -> bool:
     """Proses login pengguna dengan feedback yang ditampilkan di lokasi yang konsisten"""
     
+    # Step 1: Validasi input
+    message_container.caption("📝 Memvalidasi data input...")
+    
     # Validasi format email
     is_valid_email, email_message = validate_email_format(email)
     if not is_valid_email:
-        progress_container.empty()
         show_error_toast("Format email tidak valid")
         message_container.error(email_message)
         return False
     
     # Cek rate limiting
     if not check_rate_limit(email):
-        progress_container.empty()
         show_error_toast("Terlalu banyak percobaan")
         message_container.error("Terlalu banyak percobaan login. Silakan coba lagi nanti.")
         return False
     
     try:
-        # Step 1: Validating credentials
-        progress_container.progress(0.1)
+        # Step 2: Memvalidasi kredensial
         message_container.caption("🔐 Memvalidasi kredensial...")
-        time.sleep(0.3)  # Brief pause untuk visibilitas
         
         # Coba login dengan Firebase
         user = firebase_auth.sign_in_with_email_and_password(email, password)
         
-        # Step 2: Checking email verification status
-        progress_container.progress(0.4)
+        # Step 3: Memeriksa status verifikasi email
         message_container.caption("📧 Memeriksa status verifikasi email...")
-        time.sleep(0.2)  # Brief pause untuk visibilitas
         
         # Sync dan cek status verifikasi email dari Firebase Auth
         email_verified = sync_email_verified_to_firestore(firebase_auth, firestore_client, user)
         
         if not email_verified:
-            progress_container.empty()
             show_warning_toast("Email belum diverifikasi")
             message_container.warning(
                 f"📧 **Email Anda belum diverifikasi!**\n\n"
@@ -860,22 +844,17 @@ def login_user(email: str, password: str, firebase_auth: Any, firestore_client: 
             )
             return False
         
-        # Step 3: Verifying user data
-        progress_container.progress(0.7)
+        # Step 4: Memverifikasi data pengguna
         message_container.caption("👤 Memverifikasi data pengguna...")
-        time.sleep(0.2)  # Brief pause untuk visibilitas
         
         # Verifikasi pengguna ada di Firestore
         if not verify_user_exists(email, firestore_client):
-            progress_container.empty()
             show_error_toast("Data pengguna tidak ditemukan")
             message_container.error("Data pengguna tidak ditemukan di sistem. Silakan hubungi administrator.")
             return False
         
-        # Step 4: Setting up session
-        progress_container.progress(0.9)
+        # Step 5: Menyiapkan sesi pengguna
         message_container.caption("⚙️ Menyiapkan sesi pengguna...")
-        time.sleep(0.2)  # Brief pause untuk visibilitas
         
         # Set status login
         st.session_state['logged_in'] = True
@@ -887,7 +866,6 @@ def login_user(email: str, password: str, firebase_auth: Any, firestore_client: 
         set_remember_me_cookies(email, remember)
         
         # Step 4: Complete
-        progress_container.progress(1.0)
         message_container.success("🎉 Login berhasil! Selamat datang kembali!")
         
         logger.info(f"Login successful for: {email}")
@@ -904,8 +882,6 @@ def login_user(email: str, password: str, firebase_auth: Any, firestore_client: 
         
         # Khusus untuk INVALID_LOGIN_CREDENTIALS, berikan pesan seperti Google OAuth
         if "INVALID_LOGIN_CREDENTIALS" in error_str:
-            progress_container.empty()
-            
             # Tampilkan pesan error langsung di message_container
             show_error_toast(f"Email {email} tidak terdaftar dalam sistem kami")
             message_container.error(
@@ -931,8 +907,7 @@ def register_user(first_name: str, last_name: str, email: str, password: str,
                  progress_container: Any, message_container: Any) -> Tuple[bool, str]:
     """Proses registrasi pengguna dengan feedback yang ditampilkan di lokasi yang konsisten"""
     
-    # Step 1: Input validation
-    progress_container.progress(0.1)
+    # Step 1: Validasi input
     message_container.caption("📝 Memvalidasi data input...")
     
     # Validasi input
@@ -964,22 +939,19 @@ def register_user(first_name: str, last_name: str, email: str, password: str,
         return False, "\n".join(validation_errors)
     
     try:
-        # Step 2: Checking email availability
-        progress_container.progress(0.3)
+        # Step 2: Memeriksa ketersediaan email
         message_container.caption("📧 Memeriksa ketersediaan email...")
         
         # Cek apakah email sudah terdaftar
         try:
             existing_user = auth.get_user_by_email(email)
-            progress_container.empty()
             message_container.error("❌ Email ini sudah terdaftar. Silakan gunakan email lain atau login dengan akun yang ada.")
             show_error_toast("Email sudah terdaftar")
             return False, "❌ Email ini sudah terdaftar. Silakan gunakan email lain atau login dengan akun yang ada."
         except auth.UserNotFoundError:
             pass  # Email belum terdaftar, lanjutkan
         
-        # Step 3: Creating Firebase account
-        progress_container.progress(0.5)
+        # Step 3: Membuat akun Firebase
         message_container.caption("🔐 Membuat akun Firebase...")
         
         # Buat user di Firebase Auth
@@ -989,23 +961,16 @@ def register_user(first_name: str, last_name: str, email: str, password: str,
         else:
             user = firebase_auth.create_user_with_email_and_password(email, password)
         
-        # Step 4: Email verification
-        progress_container.progress(0.7)
-        if not is_google:
-            message_container.caption("📬 Mengirim email verifikasi...")
-        else:
-            message_container.caption("✅ Memproses akun Google...")
-        
-        # Kirim email verifikasi untuk registrasi non-Google
+        # Step 4: Mengirim email verifikasi (jika diperlukan)
         email_verification_sent = False
         if not is_google:
+            message_container.caption("📬 Mengirim email verifikasi...")
             verification_success, verification_message = send_email_verification_safe(
                 firebase_auth, user['idToken'], email
             )
             email_verification_sent = verification_success
         
-        # Step 5: Saving user data
-        progress_container.progress(0.9)
+        # Step 5: Menyimpan data pengguna
         message_container.caption("💾 Menyimpan data pengguna...")
         
         # Simpan data user ke Firestore
@@ -1021,10 +986,6 @@ def register_user(first_name: str, last_name: str, email: str, password: str,
         
         firestore_client.collection('users').document(user['localId']).set(user_data)
         
-        # Step 6: Complete
-        progress_container.progress(1.0)
-        message_container.caption("✅ Registrasi berhasil!")
-        
         if is_google:
             success_message = "🎉 Akun Google berhasil didaftarkan! Anda sekarang dapat login dan menggunakan semua fitur aplikasi."
         else:
@@ -1039,7 +1000,6 @@ def register_user(first_name: str, last_name: str, email: str, password: str,
         
         # Clear progress setelah menampilkan pesan sukses, tapi biarkan message tetap
         time.sleep(1.2)
-        progress_container.empty()
         
         return True, success_message
                 
@@ -1051,54 +1011,40 @@ def register_user(first_name: str, last_name: str, email: str, password: str,
 def reset_password(email: str, firebase_auth: Any, progress_container: Any, message_container: Any) -> bool:
     """Proses reset password dengan feedback yang ditampilkan di lokasi yang konsisten"""
     
-    # Step 1: Input validation
-    progress_container.progress(0.2)
-    message_container.caption("📝 Memvalidasi alamat email...")
+    # Step 1: Validasi input
+    message_container.caption("📝 Memvalidasi data input...")
     
     # Validasi format email
     is_valid_email, email_message = validate_email_format(email.strip())
     if not is_valid_email:
-        progress_container.empty()
         message_container.error(f"❌ {email_message}")
         show_error_toast("Format email tidak valid")
         return False
     
-    # Step 2: Rate limiting check
-    progress_container.progress(0.4)
-    message_container.caption("🔒 Memeriksa batas permintaan...")
-    
     # Cek rate limiting
     if not check_rate_limit(f"reset_{email}"):
-        progress_container.empty()
         message_container.error("⚠️ Terlalu banyak percobaan reset password. Silakan tunggu 5 menit sebelum mencoba lagi.")
         show_warning_toast("Terlalu banyak percobaan reset")
         return False
     
     try:
-        # Step 3: Checking user existence
-        progress_container.progress(0.6)
-        message_container.caption("👤 Memeriksa keberadaan akun...")
+        # Step 2: Memeriksa ketersediaan akun
+        message_container.caption("👤 Memeriksa ketersediaan akun...")
         
         # Cek apakah user ada
         try:
             auth.get_user_by_email(email)
         except auth.UserNotFoundError:
-            progress_container.empty()
             message_container.error("❌ Tidak ada akun yang ditemukan dengan alamat email ini.")
             show_error_toast("❌ Akun tidak ditemukan!")
             return False
         
-        # Step 4: Sending reset email
-        progress_container.progress(0.8)
+        # Step 3: Mengirim email reset password
         message_container.caption("📧 Mengirim email reset password...")
         
         # Kirim email reset password
         firebase_auth.send_password_reset_email(email)
         logger.info(f"Password reset email sent to: {email}")
-        
-        # Step 5: Complete
-        progress_container.progress(1.0)
-        message_container.caption("✅ Email reset berhasil dikirim!")
         
         success_message = f"📧 **Petunjuk reset password telah dikirim ke {email}**\n\nSilakan periksa kotak masuk email Anda (dan folder spam) untuk link reset password.\n\nLink akan aktif selama 1 jam."
         message_container.success(success_message)
@@ -1107,7 +1053,6 @@ def reset_password(email: str, firebase_auth: Any, progress_container: Any, mess
         
         # Clear progress setelah menampilkan pesan sukses, tapi biarkan message tetap
         time.sleep(1.2)
-        progress_container.empty()
         return True
         
     except Exception as e:
@@ -1284,110 +1229,97 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             disabled=not app_ready
         )
 
-        # Placeholder untuk pesan feedback dan progress di dalam form
+        # Placeholder untuk pesan feedback dan progress di dalam form, di bawah tombol Google
         feedback_placeholder = st.empty()
 
-    # Tampilkan pesan error Google OAuth jika ada - di atas form
-    if st.session_state.get('google_auth_error', False):
-        email_error = st.session_state.get('google_auth_email', '')
-        st.error(f"**Akun Google Tidak Terdaftar**\n\n"
-                f"Akun Google {email_error} belum terdaftar dalam sistem kami.")
-        st.info(f"💡 **Saran:** Silakan daftar terlebih dahulu menggunakan tab 'Daftar' atau gunakan akun email yang sudah terdaftar.")
-        show_error_toast(f"Akun Google {email_error} tidak terdaftar dalam sistem kami.")
-        del st.session_state['google_auth_error']
-        if 'google_auth_email' in st.session_state:
-            del st.session_state['google_auth_email']
+        # Tampilkan pesan error Google OAuth jika ada - di dalam form, di bawah tombol Google
+        if st.session_state.get('google_auth_error', False):
+            email_error = st.session_state.get('google_auth_email', '')
+            st.error(f"**Akun Google Tidak Terdaftar**\n\n"
+                    f"Akun Google {email_error} belum terdaftar dalam sistem kami.")
+            st.info(f"💡 **Saran:** Silakan daftar terlebih dahulu menggunakan tab 'Daftar' atau gunakan akun email yang sudah terdaftar.")
+            show_error_toast(f"Akun Google {email_error} tidak terdaftar dalam sistem kami.")
+            del st.session_state['google_auth_error']
+            if 'google_auth_email' in st.session_state:
+                del st.session_state['google_auth_email']
 
-    # Tampilkan pesan error verifikasi Google OAuth jika ada - di atas form
-    if st.session_state.get('google_auth_verification_error', False):
-        email_error = st.session_state.get('google_auth_email', '')
-        st.warning(
-            f"📧 **Email Anda belum diverifikasi!**\n\n"
-            f"Email {email_error} belum diverifikasi. "
-            f"Silakan periksa kotak masuk email Anda dan klik link verifikasi yang telah dikirim. "
-            f"Setelah verifikasi, silakan coba login kembali.\n\n"
-            f"💡 *Tip: Periksa juga folder spam/junk email*"
-        )
-        show_warning_toast("Email belum diverifikasi")
-        del st.session_state['google_auth_verification_error']
-        if 'google_auth_email' in st.session_state:
-            del st.session_state['google_auth_email']
+        # Tampilkan pesan error verifikasi Google OAuth jika ada - di dalam form, di bawah tombol Google
+        if st.session_state.get('google_auth_verification_error', False):
+            email_error = st.session_state.get('google_auth_email', '')
+            st.warning(
+                f"📧 **Email Anda belum diverifikasi!**\n\n"
+                f"Email {email_error} belum diverifikasi. "
+                f"Silakan periksa kotak masuk email Anda dan klik link verifikasi yang telah dikirim. "
+                f"Setelah verifikasi, silakan coba login kembali.\n\n"
+                f"💡 *Tip: Periksa juga folder spam/junk email*"
+            )
+            show_warning_toast("Email belum diverifikasi")
+            del st.session_state['google_auth_verification_error']
+            if 'google_auth_email' in st.session_state:
+                del st.session_state['google_auth_email']
 
-
-    # Handle tombol login email di luar form
-    if email_login_clicked:
-        # Clear any existing content in feedback placeholder
-        feedback_placeholder.empty()
-        
-        if email and password:
-            # Validasi ulang email sebelum proses login
-            email_clean = email.strip()
-            is_valid_email, email_message = validate_email_format(email_clean)
-            if not is_valid_email:
-                with feedback_placeholder.container():
-                    st.error(f"❌ {email_message}")
-                show_error_toast("Format email tidak valid")
-                return
-            # Pastikan Firebase sudah siap
-            if not firebase_auth or not firestore_client:
-                with feedback_placeholder.container():
-                    st.error("❌ Sistem belum siap. Silakan tunggu beberapa detik dan coba lagi.")
-                show_error_toast("Sistem belum siap")
-                return
-            # Simpan email terakhir untuk kemudahan
-            try:
-                cookie_controller.set('last_email', email_clean, max_age=LAST_EMAIL_DURATION)
-            except Exception as e:
-                logger.warning(f"Failed to save last email: {e}")
-            
-            # Proses login dengan progress steps yang konsisten seperti register
+        # Handle tombol login email di dalam form
+        if email_login_clicked:
             with feedback_placeholder.container():
-                progress_container = st.empty()
                 message_container = st.empty()
-                
-                # Progress indicator awal
-                progress_container.progress(0.05)
                 message_container.caption("🔐 Memulai proses login...")
-                
-                # Proses login dengan email yang sudah divalidasi
-                result = login_user(email_clean, password, firebase_auth, firestore_client, 
-                                  remember, progress_container, message_container)
-                if result:
-                    # Login berhasil, clear containers sebelum rerun
-                    time.sleep(0.5)  # Brief pause
-                    progress_container.empty()
-                    message_container.empty()
-                    st.rerun()
-        else:
-            with feedback_placeholder.container():
-                st.warning("⚠️ Silakan isi kolom email dan kata sandi.")
-            show_warning_toast("Silakan isi kolom email dan kata sandi.")
-
-
-    # Handle tombol login Google di luar form
-    if google_login_clicked:
-        # Clear any existing content in feedback placeholder
-        feedback_placeholder.empty()
-        
-        with feedback_placeholder.container():
-            progress_container = st.empty()
-            message_container = st.empty()
             
-            progress_container.progress(0.1)
-            message_container.caption("🔗 Mengalihkan ke Google OAuth...")
+            if email and password:
+                # Validasi ulang email sebelum proses login
+                email_clean = email.strip()
+                is_valid_email, email_message = validate_email_format(email_clean)
+                if not is_valid_email:
+                    with feedback_placeholder.container():
+                        st.error(f"❌ {email_message}")
+                    show_error_toast("Format email tidak valid")
+                    st.stop()
+                
+                # Pastikan Firebase sudah siap
+                if not firebase_auth or not firestore_client:
+                    with feedback_placeholder.container():
+                        st.error("❌ Sistem belum siap. Silakan tunggu beberapa detik dan coba lagi.")
+                    show_error_toast("Sistem belum siap")
+                    st.stop()
+                
+                # Simpan email terakhir untuk kemudahan
+                try:
+                    cookie_controller.set('last_email', email_clean, max_age=LAST_EMAIL_DURATION)
+                except Exception as e:
+                    logger.warning(f"Failed to save last email: {e}")
+                
+                # Progress indicator menggunakan feedback_placeholder
+                with feedback_placeholder.container():
+                    message_container = st.empty()
+                    
+                    # Proses login dengan email yang sudah divalidasi
+                    result = login_user(email_clean, password, firebase_auth, firestore_client, remember, None, message_container)
+                    if result:
+                        st.rerun()
+            else:
+                with feedback_placeholder.container():
+                    st.warning("⚠️ Silakan isi kolom email dan kata sandi.")
+                show_warning_toast("Silakan isi kolom email dan kata sandi.")
+
+        # Handle tombol login Google di dalam form
+        if google_login_clicked:
+            with feedback_placeholder.container():
+                message_container = st.empty()
+                message_container.caption("🔗 Mengalihkan ke Google OAuth...")
+            
             try:
                 google_url = get_google_authorization_url()
-                progress_container.progress(0.8)
-                message_container.caption("✅ Berhasil mengalihkan ke Google...")
-                time.sleep(0.5)
-                progress_container.empty()
+                with feedback_placeholder.container():
+                    message_container = st.empty()
+                    message_container.caption("✅ Berhasil mengalihkan ke Google...")
                 st.markdown(f'<meta http-equiv="refresh" content="0; url={google_url}">', unsafe_allow_html=True)
                 time.sleep(1)
             except Exception as e:
                 logger.error(f"Google OAuth redirect failed: {e}")
-                progress_container.empty()
-                message_container.error("❌ Gagal mengalihkan ke Google. Silakan coba lagi.")
+                with feedback_placeholder.container():
+                    message_container = st.empty()
+                    message_container.error("❌ Gagal mengalihkan ke Google. Silakan coba lagi.")
                 show_error_toast("❌ Gagal mengalihkan ke Google. Silakan coba lagi.")
+
     
     # Tampilkan tips untuk login
     display_auth_tips("login")
@@ -1479,6 +1411,10 @@ def display_register_form(firebase_auth: Any, firestore_client: Any) -> None:
 
     # Handle tombol registrasi di luar form
     if register_clicked:
+        with feedback_placeholder.container():
+            message_container = st.empty()
+            message_container.caption("📝 Memulai proses registrasi...")
+        
         # Perbarui state sesi dengan nilai formulir saat ini
         st.session_state['register_form_data'].update({
             'first_name': first_name,
@@ -1508,18 +1444,13 @@ def display_register_form(firebase_auth: Any, firestore_client: Any) -> None:
             
         # Proses registrasi dengan progress steps yang konsisten
         with feedback_placeholder.container():
-            progress_container = st.empty()
             message_container = st.empty()
-            
-            # Progress indicator
-            progress_container.progress(0.05)
-            message_container.caption("📝 Memulai proses registrasi...")
             
             # Proses registrasi tanpa spinner bawaan
             success, message = register_user(
                 first_name or "", last_name or "", email or "", password or "", 
                 firebase_auth, firestore_client, bool(google_email),
-                progress_container, message_container
+                None, message_container
             )
             
             if success:
@@ -1536,7 +1467,6 @@ def display_register_form(firebase_auth: Any, firestore_client: Any) -> None:
                 
                 # Clear progress setelah registrasi berhasil, tapi biarkan message tetap
                 time.sleep(1.2)  # Beri waktu untuk membaca pesan
-                progress_container.empty()
     
     # Tampilkan tips untuk registrasi
     display_auth_tips("register")
@@ -1567,6 +1497,10 @@ def display_reset_password_form(firebase_auth: Any) -> None:
 
     # Handle tombol reset di luar form
     if reset_clicked:
+        with feedback_placeholder.container():
+            message_container = st.empty()
+            message_container.caption("📧 Memulai proses reset password...")
+        
         if not email or not email.strip():
             with feedback_placeholder.container():
                 st.warning("⚠️ Silakan masukkan alamat email Anda.")
@@ -1575,20 +1509,14 @@ def display_reset_password_form(firebase_auth: Any) -> None:
             
         # Proses reset password dengan progress steps yang konsisten
         with feedback_placeholder.container():
-            progress_container = st.empty()
             message_container = st.empty()
             
-            # Progress indicator
-            progress_container.progress(0.1)
-            message_container.caption("📧 Memulai proses reset password...")
-            
             # Proses reset password tanpa spinner bawaan
-            result = reset_password(email.strip(), firebase_auth, progress_container, message_container)
+            result = reset_password(email.strip(), firebase_auth, None, message_container)
             
             # Clear progress setelah reset password selesai, tapi biarkan message tetap
             if result:
                 time.sleep(1.2)  # Beri waktu untuk membaca pesan sukses
-                progress_container.empty()
     
     # Tampilkan tips untuk reset password
     display_auth_tips("reset")

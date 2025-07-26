@@ -33,10 +33,13 @@ import base64
 import time
 import sys
 import os
+import traceback
 from typing import Dict, List, Optional, Tuple, Any
 
 # NLTK for text processing
 import nltk
+from nltk.tokenize import sent_tokenize, word_tokenize
+from nltk import FreqDist
 
 # Authentication and utilities
 from ui.auth import auth
@@ -79,6 +82,52 @@ DISPLAY_COLUMNS = [
     'review_text', 'teks_preprocessing', 
     'predicted_sentiment', 'confidence'
 ]
+
+# ==============================================================================
+# HELPER FUNCTIONS FOR CALCULATIONS
+# ==============================================================================
+
+def calculate_sentiment_statistics(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Calculate comprehensive sentiment statistics from dataframe.
+    
+    Args:
+        df: DataFrame with predicted_sentiment and confidence columns
+        
+    Returns:
+        Dictionary containing all calculated statistics
+    """
+    total_count = len(df)
+    pos_count = len(df[df['predicted_sentiment'] == 'POSITIF'])
+    neg_count = len(df[df['predicted_sentiment'] == 'NEGATIF'])
+    
+    pos_percentage = (pos_count / total_count * 100) if total_count > 0 else 0
+    neg_percentage = (neg_count / total_count * 100) if total_count > 0 else 0
+    avg_confidence = df['confidence'].mean() * 100 if not df['confidence'].empty else 0
+    
+    dominant_sentiment = "Positif" if pos_count > neg_count else "Negatif"
+    dominant_percentage = max(pos_percentage, neg_percentage)
+    
+    return {
+        'total_count': total_count,
+        'pos_count': pos_count,
+        'neg_count': neg_count,
+        'pos_percentage': pos_percentage,
+        'neg_percentage': neg_percentage,
+        'avg_confidence': avg_confidence,
+        'dominant_sentiment': dominant_sentiment,
+        'dominant_percentage': dominant_percentage
+    }
+
+
+def safe_progress_cleanup(progress_bar) -> None:
+    """Safely cleanup progress bar."""
+    try:
+        if progress_bar is not None:
+            progress_bar.empty()
+    except:
+        pass
+
 
 # ==============================================================================
 # UTILITY FUNCTIONS
@@ -233,18 +282,29 @@ def process_uploaded_file(uploaded_file, preprocess_options: Dict[str, bool],
     Returns:
         Tuple of (success, dataframe, message)
     """
+    progress_bar = None
+    
     try:
         # Progress bar setup
         progress_bar = st.progress(0, text="Memproses file CSV...")
         
-        # Read CSV file
-        df = pd.read_csv(uploaded_file)
+        # Read CSV file with error handling
+        try:
+            df = pd.read_csv(uploaded_file, encoding='utf-8')
+        except UnicodeDecodeError:
+            try:
+                df = pd.read_csv(uploaded_file, encoding='latin-1')
+                st.warning("⚠️ File dibaca dengan encoding latin-1. Pastikan karakter khusus tertampil dengan benar.")
+            except Exception as e:
+                safe_progress_cleanup(progress_bar)
+                return False, None, f"❌ Gagal membaca file CSV: {str(e)}"
+        
         progress_bar.progress(25, text="File berhasil diunggah...")
         
         # Validate file
         is_valid, message, text_col = validate_dataframe(df)
         if not is_valid:
-            progress_bar.empty()
+            safe_progress_cleanup(progress_bar)
             return False, None, message
         
         # Handle column selection if needed
@@ -252,44 +312,75 @@ def process_uploaded_file(uploaded_file, preprocess_options: Dict[str, bool],
             # Let user select text column
             text_columns = [col for col in df.columns if df[col].dtype == 'object']
             if not text_columns:
-                progress_bar.empty()
+                safe_progress_cleanup(progress_bar)
                 return False, None, "❌ Tidak ditemukan kolom teks dalam file CSV!"
             
-            # Create column selector (this will cause a rerun, so we need to handle it)
+            # Create column selector with better state management
             if 'selected_text_column' not in st.session_state:
-                st.write("**Pilih kolom yang berisi teks ulasan:**")
-                selected_col = st.selectbox("Kolom teks:", text_columns, key="text_column_selector")
-                if st.button("Konfirmasi Kolom", key="confirm_column"):
-                    st.session_state.selected_text_column = selected_col
-                    st.rerun()
-                progress_bar.empty()
-                return False, None, "Silakan pilih kolom teks dan konfirmasi."
+                safe_progress_cleanup(progress_bar)
+                
+                st.write("**🎯 Pilih kolom yang berisi teks ulasan:**")
+                
+                with st.container():
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        selected_col = st.selectbox(
+                            "Kolom teks:", 
+                            text_columns, 
+                            key="text_column_selector",
+                            help="Pilih kolom yang berisi teks ulasan untuk dianalisis"
+                        )
+                    with col2:
+                        if st.button("✅ Konfirmasi", key="confirm_column", use_container_width=True):
+                            st.session_state.selected_text_column = selected_col
+                            st.rerun()
+                
+                # Show preview of selected column
+                if selected_col and len(df) > 0:
+                    st.write("**👀 Preview data dari kolom yang dipilih:**")
+                    preview_data = df[selected_col].head(3).tolist()
+                    for i, text in enumerate(preview_data):
+                        st.text(f"{i+1}. {str(text)[:100]}...")
+                
+                return False, None, "Silakan pilih kolom teks dan konfirmasi untuk melanjutkan."
             else:
                 df['review_text'] = df[st.session_state.selected_text_column]
-        else:
-            # Use existing review_text column
-            pass
         
         # Ensure review_text column exists
         if 'review_text' not in df.columns:
-            progress_bar.empty()
+            safe_progress_cleanup(progress_bar)
             return False, None, "❌ Kolom review_text tidak ditemukan!"
+        
+        # Validate data quality
+        df = df.dropna(subset=['review_text'])  # Remove empty reviews
+        df = df[df['review_text'].astype(str).str.strip() != '']  # Remove empty strings
+        
+        if len(df) == 0:
+            safe_progress_cleanup(progress_bar)
+            return False, None, "❌ Tidak ada data teks yang valid untuk dianalisis!"
         
         progress_bar.progress(50, text="Melakukan preprocessing teks...")
         
-        # Preprocess text
-        df['teks_preprocessing'] = df['review_text'].astype(str).apply(
-            lambda x: preprocess_text(x, preprocess_options)
-        )
+        # Batch preprocess text for better performance
+        try:
+            df['teks_preprocessing'] = df['review_text'].astype(str).apply(
+                lambda x: preprocess_text(x, preprocess_options)
+            )
+        except Exception as e:
+            safe_progress_cleanup(progress_bar)
+            return False, None, f"❌ Gagal melakukan preprocessing: {str(e)}"
         
         progress_bar.progress(75, text="Memprediksi sentimen...")
         
-        # Predict sentiment
+        # Predict sentiment with better error handling
         predicted_results = []
-        for text in df['teks_preprocessing']:
+        successful_predictions = 0
+        
+        for i, text in enumerate(df['teks_preprocessing']):
             try:
                 result = predict_sentiment(text, pipeline, preprocess_options)
                 predicted_results.append(result)
+                successful_predictions += 1
             except Exception as e:
                 # Handle prediction errors gracefully
                 predicted_results.append({
@@ -297,6 +388,11 @@ def process_uploaded_file(uploaded_file, preprocess_options: Dict[str, bool],
                     'confidence': 0.0,
                     'probabilities': {'POSITIF': 0.0, 'NEGATIF': 0.0}
                 })
+            
+            # Update progress for large datasets
+            if i % 100 == 0 and i > 0:
+                current_progress = 75 + (i / len(df)) * 20
+                progress_bar.progress(int(current_progress), text=f"Memprediksi sentimen... ({i}/{len(df)})")
         
         # Extract results
         df['predicted_sentiment'] = [result['sentiment'] for result in predicted_results]
@@ -308,77 +404,80 @@ def process_uploaded_file(uploaded_file, preprocess_options: Dict[str, bool],
             st.warning(f"⚠️ {error_count} teks gagal diprediksi dan akan diabaikan.")
             df = df[df['predicted_sentiment'] != 'ERROR']
         
+        if len(df) == 0:
+            safe_progress_cleanup(progress_bar)
+            return False, None, "❌ Semua prediksi gagal. Periksa kualitas data input."
+        
         progress_bar.progress(100, text="Analisis selesai!")
         time.sleep(0.5)
-        progress_bar.empty()
+        safe_progress_cleanup(progress_bar)
         
-        return True, df, f"✅ Berhasil menganalisis {len(df)} ulasan!"
+        success_rate = (successful_predictions / len(predicted_results)) * 100
+        return True, df, f"✅ Berhasil menganalisis {len(df)} ulasan! (Tingkat keberhasilan: {success_rate:.1f}%)"
         
     except Exception as e:
-        if 'progress_bar' in locals():
-            progress_bar.empty()
-        return False, None, f"❌ Terjadi kesalahan: {str(e)}"
+        safe_progress_cleanup(progress_bar)
+        error_msg = f"❌ Terjadi kesalahan: {str(e)}"
+        st.error(f"Debug info: {traceback.format_exc()}")
+        return False, None, error_msg
 
 # ==============================================================================
 # VISUALIZATION FUNCTIONS
 # ==============================================================================
 
 def create_sentiment_metrics(df: pd.DataFrame) -> None:
-    """Create sentiment metrics display."""
+    """Create sentiment metrics display using calculated statistics."""
     st.write("### 📊 Hasil Analisis Sentimen")
     
+    # Calculate all statistics once
+    stats = calculate_sentiment_statistics(df)
+    
+    # Main metrics row
     col1, col2, col3 = st.columns(3)
-    
-    # Calculate metrics
-    total_count = len(df)
-    pos_count = len(df[df['predicted_sentiment'] == 'POSITIF'])
-    neg_count = len(df[df['predicted_sentiment'] == 'NEGATIF'])
-    
-    pos_percentage = (pos_count / total_count * 100) if total_count > 0 else 0
-    neg_percentage = (neg_count / total_count * 100) if total_count > 0 else 0
-    avg_confidence = df['confidence'].mean() * 100 if not df['confidence'].empty else 0
     
     with col1:
         st.metric(
             label="Total Ulasan 📋", 
-            value=f"{total_count:,} ulasan"
+            value=f"{stats['total_count']:,} ulasan"
         )
     
     with col2:
         st.metric(
             label="Sentimen Positif 🟢", 
-            value=f"{pos_count:,} ulasan", 
-            delta=f"{pos_percentage:.1f}%"
+            value=f"{stats['pos_count']:,} ulasan", 
+            delta=f"{stats['pos_percentage']:.1f}%"
         )
     
     with col3:
         st.metric(
             label="Sentimen Negatif 🔴", 
-            value=f"{neg_count:,} ulasan", 
-            delta=f"{neg_percentage:.1f}%"
+            value=f"{stats['neg_count']:,} ulasan", 
+            delta=f"{stats['neg_percentage']:.1f}%"
         )
     
-    # Additional metrics
+    # Additional metrics row
     col1, col2 = st.columns(2)
     with col1:
         st.metric(
             label="Rata-rata Confidence 🎯",
-            value=f"{avg_confidence:.1f}%",
+            value=f"{stats['avg_confidence']:.1f}%",
             help="Rata-rata tingkat kepercayaan model dalam prediksi"
         )
     
     with col2:
-        dominant_sentiment = "Positif" if pos_count > neg_count else "Negatif"
         st.metric(
             label="Sentimen Dominan 👑",
-            value=dominant_sentiment,
-            delta=f"{max(pos_percentage, neg_percentage):.1f}%"
+            value=stats['dominant_sentiment'],
+            delta=f"{stats['dominant_percentage']:.1f}%"
         )
 
 
 def create_visualization_charts(df: pd.DataFrame) -> None:
-    """Create visualization charts for sentiment analysis."""
+    """Create visualization charts for sentiment analysis using pre-calculated stats."""
     st.write("### 📈 Visualisasi Hasil")
+    
+    # Get statistics once
+    stats = calculate_sentiment_statistics(df)
     
     col1, col2 = st.columns(2)
     
@@ -401,17 +500,15 @@ def create_visualization_charts(df: pd.DataFrame) -> None:
         st.plotly_chart(fig_pie, use_container_width=True)
     
     with col2:
-        # Gauge chart
-        pos_percentage = len(df[df['predicted_sentiment'] == 'POSITIF']) / len(df) * 100
-        
+        # Gauge chart using pre-calculated percentage
         fig_gauge = go.Figure(go.Indicator(
             mode="gauge+number",
-            value=pos_percentage,
+            value=stats['pos_percentage'],
             domain={'x': [0, 1], 'y': [0, 1]},
             title={'text': "Persentase Sentimen Positif"},
             gauge={
                 'axis': {'range': [0, 100]},
-                'bar': {'color': "green" if pos_percentage >= 50 else "red"},
+                'bar': {'color': "green" if stats['pos_percentage'] >= 50 else "red"},
                 'steps': [
                     {'range': [0, 33], 'color': 'lightgray'},
                     {'range': [33, 66], 'color': 'gray'},
@@ -420,7 +517,7 @@ def create_visualization_charts(df: pd.DataFrame) -> None:
                 'threshold': {
                     'line': {'color': "black", 'width': 4},
                     'thickness': 0.75,
-                    'value': pos_percentage
+                    'value': stats['pos_percentage']
                 }
             },
             number={'suffix': "%", 'valueformat': ".1f"}
@@ -430,6 +527,12 @@ def create_visualization_charts(df: pd.DataFrame) -> None:
     
     # Confidence distribution
     st.write("### 🎯 Distribusi Confidence Score")
+    
+    # Check if data exists
+    if len(df) == 0:
+        st.warning("⚠️ Tidak ada data untuk ditampilkan dalam histogram.")
+        return
+        
     fig_hist = px.histogram(
         df, 
         x='confidence', 
@@ -447,17 +550,22 @@ def create_visualization_charts(df: pd.DataFrame) -> None:
 # ==============================================================================
 
 def render_results_table_tab(df: pd.DataFrame) -> None:
-    """Render the results table tab."""
+    """Render the results table tab with improved filtering and validation."""
     st.subheader("📋 Tabel Hasil Prediksi Sentimen")
     
-    # Filter options
+    if df.empty:
+        st.warning("⚠️ Tidak ada data untuk ditampilkan.")
+        return
+    
+    # Filter options with better layout
     col1, col2 = st.columns([1, 3])
     
     with col1:
         filter_sentiment = st.selectbox(
             "Filter berdasarkan sentimen:",
             ["Semua", "POSITIF", "NEGATIF"],
-            key="filter_sentiment"
+            key="filter_sentiment",
+            help="Filter hasil berdasarkan jenis sentimen"
         )
     
     with col2:
@@ -466,12 +574,12 @@ def render_results_table_tab(df: pd.DataFrame) -> None:
             min_value=0.0,
             max_value=1.0,
             value=0.0,
-            step=0.1,
+            step=0.05,
             key="confidence_threshold",
             help="Tampilkan hanya prediksi dengan confidence di atas threshold"
         )
     
-    # Apply filters
+    # Apply filters with validation
     filtered_df = df.copy()
     
     if filter_sentiment != "Semua":
@@ -479,26 +587,85 @@ def render_results_table_tab(df: pd.DataFrame) -> None:
     
     filtered_df = filtered_df[filtered_df['confidence'] >= confidence_threshold]
     
-    # Display filtered data
-    st.write(f"**Menampilkan {len(filtered_df):,} dari {len(df):,} ulasan**")
+    # Display filtered data with status
+    if len(filtered_df) == 0:
+        st.warning("⚠️ Tidak ada data yang memenuhi kriteria filter. Coba kurangi threshold confidence atau ubah filter sentimen.")
+        
+        # Show current filter summary
+        st.info(f"""
+        **Filter Saat Ini:**
+        - Sentimen: {filter_sentiment}
+        - Minimum Confidence: {confidence_threshold:.2f}
+        
+        **Saran:** Kurangi nilai minimum confidence atau pilih "Semua" untuk sentimen.
+        """)
+        return
     
-    # Select columns to display
-    display_cols = [col for col in DISPLAY_COLUMNS if col in filtered_df.columns]
-    st.dataframe(filtered_df[display_cols], use_container_width=True)
+    st.success(f"**Menampilkan {len(filtered_df):,} dari {len(df):,} ulasan** ({len(filtered_df)/len(df)*100:.1f}%)")
     
-    # Download button
+    # Select columns to display with error handling
+    available_cols = [col for col in DISPLAY_COLUMNS if col in filtered_df.columns]
+    if not available_cols:
+        st.error("❌ Kolom yang diperlukan tidak tersedia dalam data.")
+        return
+    
+    # Enhanced dataframe display
+    st.dataframe(
+        filtered_df[available_cols], 
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "review_text": st.column_config.TextColumn(
+                "Teks Asli",
+                help="Teks ulasan asli sebelum preprocessing",
+                max_chars=100
+            ),
+            "teks_preprocessing": st.column_config.TextColumn(
+                "Teks Preprocessing",
+                help="Teks setelah preprocessing",
+                max_chars=100
+            ),
+            "predicted_sentiment": st.column_config.TextColumn(
+                "Prediksi Sentimen",
+                help="Hasil prediksi sentimen"
+            ),
+            "confidence": st.column_config.NumberColumn(
+                "Confidence Score",
+                help="Tingkat kepercayaan prediksi (0-1)",
+                format="%.3f"
+            )
+        }
+    )
+    
+    # Enhanced download functionality
     if not filtered_df.empty:
-        csv = filtered_df.to_csv(index=False)
-        b64 = base64.b64encode(csv.encode()).decode()
-        href = f'<a href="data:file/csv;base64,{b64}" download="hasil_prediksi_goride.csv">📥 Download Hasil Prediksi (CSV)</a>'
-        st.markdown(href, unsafe_allow_html=True)
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            # Add timestamp to filename
+            timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"hasil_prediksi_goride_{timestamp}.csv"
+            
+            csv = filtered_df.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Hasil Prediksi (CSV)",
+                data=csv,
+                file_name=filename,
+                mime="text/csv",
+                use_container_width=True,
+                help=f"Download {len(filtered_df)} data yang telah difilter"
+            )
 
 
 def render_word_frequency_tab(preprocessed_text: str) -> None:
-    """Render the word frequency analysis tab."""
+    """Render the word frequency analysis tab with improved validation."""
     st.subheader("📊 Analisis Frekuensi Kata")
     
-    # Configuration
+    # Validate input text
+    if not preprocessed_text or not preprocessed_text.strip():
+        st.warning("⚠️ Tidak ada teks yang tersedia untuk analisis frekuensi kata.")
+        return
+    
+    # Configuration with better defaults
     col1, col2 = st.columns(2)
     with col1:
         top_n = st.slider(
@@ -506,37 +673,60 @@ def render_word_frequency_tab(preprocessed_text: str) -> None:
             min_value=5,
             max_value=50,
             value=15,
-            key="word_freq_top_n"
+            key="word_freq_top_n",
+            help="Pilih berapa banyak kata teratas yang ingin ditampilkan"
         )
     
     with col2:
         chart_type = st.radio(
             "Tipe visualisasi:",
-            ["Bar Chart", "Horizontal Bar"],
-            key="word_freq_chart_type"
+            ["Horizontal Bar", "Vertical Bar"],
+            key="word_freq_chart_type",
+            help="Pilih orientasi chart yang diinginkan"
         )
     
-    # Get word frequencies
-    word_freq = get_word_frequencies(preprocessed_text, top_n=top_n)
+    # Get word frequencies with error handling
+    try:
+        word_freq = get_word_frequencies(preprocessed_text, top_n=top_n)
+    except Exception as e:
+        st.error(f"❌ Gagal menganalisis frekuensi kata: {str(e)}")
+        return
     
-    if word_freq:
-        # Create DataFrame
-        word_freq_df = pd.DataFrame(
-            list(word_freq.items()), 
-            columns=['Kata', 'Frekuensi']
-        )
+    if not word_freq:
+        st.info("📝 Tidak cukup kata unik untuk analisis frekuensi setelah preprocessing.")
         
-        # Create visualization
-        if chart_type == "Bar Chart":
+        # Provide suggestions
+        with st.expander("💡 Saran untuk meningkatkan hasil analisis"):
+            st.write("""
+            - Pastikan data teks mengandung cukup kata yang bermakna
+            - Periksa pengaturan preprocessing (mungkin terlalu ketat)
+            - Coba dengan dataset yang lebih besar
+            """)
+        return
+    
+    # Create DataFrame with validation
+    word_freq_df = pd.DataFrame(
+        list(word_freq.items()), 
+        columns=['Kata', 'Frekuensi']
+    )
+    
+    if len(word_freq_df) == 0:
+        st.warning("⚠️ Tidak ada data frekuensi kata untuk ditampilkan.")
+        return
+    
+    # Create visualization with improved styling
+    try:
+        if chart_type == "Horizontal Bar":
             word_freq_df = word_freq_df.sort_values('Frekuensi', ascending=True)
             fig = px.bar(
                 word_freq_df.tail(top_n),
                 x='Frekuensi',
                 y='Kata',
                 orientation='h',
-                title=f"Top {top_n} Kata Paling Sering Muncul",
+                title=f"Top {min(top_n, len(word_freq_df))} Kata Paling Sering Muncul",
                 color='Frekuensi',
-                color_continuous_scale='Viridis'
+                color_continuous_scale='Viridis',
+                labels={'Frekuensi': 'Jumlah Kemunculan', 'Kata': 'Kata'}
             )
         else:
             word_freq_df = word_freq_df.sort_values('Frekuensi', ascending=False)
@@ -544,22 +734,46 @@ def render_word_frequency_tab(preprocessed_text: str) -> None:
                 word_freq_df.head(top_n),
                 x='Kata',
                 y='Frekuensi',
-                title=f"Top {top_n} Kata Paling Sering Muncul",
+                title=f"Top {min(top_n, len(word_freq_df))} Kata Paling Sering Muncul",
                 color='Frekuensi',
-                color_continuous_scale='Viridis'
+                color_continuous_scale='Viridis',
+                labels={'Frekuensi': 'Jumlah Kemunculan', 'Kata': 'Kata'}
             )
             fig.update_xaxes(tickangle=45)
         
-        fig.update_layout(height=500)
+        fig.update_layout(height=500, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
         
-        # Display table
+        # Display table with summary statistics
         st.write("**📋 Tabel Frekuensi Kata:**")
+        
+        # Add summary info
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Kata Unik", len(word_freq_df))
+        with col2:
+            st.metric("Kata Tersering", word_freq_df.iloc[0]['Kata'] if len(word_freq_df) > 0 else "N/A")
+        with col3:
+            st.metric("Frekuensi Tertinggi", word_freq_df.iloc[0]['Frekuensi'] if len(word_freq_df) > 0 else 0)
+        
+        word_freq_df_sorted = word_freq_df.sort_values('Frekuensi', ascending=False)
+        st.dataframe(
+            word_freq_df_sorted, 
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Kata": st.column_config.TextColumn("Kata", help="Kata hasil preprocessing"),
+                "Frekuensi": st.column_config.NumberColumn("Frekuensi", help="Jumlah kemunculan kata")
+            }
+        )
+        
+    except Exception as e:
+        st.error(f"❌ Gagal membuat visualisasi: {str(e)}")
+        
+        # Fallback: show data in table only
+        st.write("**📋 Data Frekuensi Kata (Mode Fallback):**")
         word_freq_df_sorted = word_freq_df.sort_values('Frekuensi', ascending=False)
         st.dataframe(word_freq_df_sorted, use_container_width=True)
-        
-    else:
-        st.info("📝 Tidak cukup kata unik untuk analisis frekuensi setelah preprocessing.")
 
 
 def render_ngram_analysis_tab(preprocessed_text: str) -> None:
@@ -674,13 +888,27 @@ def render_wordcloud_tab(preprocessed_text: str) -> None:
 
 
 def render_text_summary_tab(preprocessed_text: str) -> None:
-    """Render the text summary tab."""
+    """Render the text summary tab with comprehensive error handling."""
     st.subheader("📝 Ringkasan dan Statistik Teks")
     
-    # Basic text statistics
+    # Validate input
+    if not preprocessed_text or not preprocessed_text.strip():
+        st.warning("⚠️ Tidak ada teks yang tersedia untuk analisis.")
+        return
+    
+    # Basic text statistics with error handling
     try:
-        sentences = nltk.sent_tokenize(preprocessed_text)
-        words = nltk.word_tokenize(preprocessed_text)
+        # Ensure NLTK data is available
+        try:
+            sentences = sent_tokenize(preprocessed_text)
+            words = word_tokenize(preprocessed_text)
+        except LookupError:
+            st.error("❌ Data NLTK tidak tersedia. Menggunakan metode alternatif...")
+            # Fallback to simple split
+            sentences = preprocessed_text.split('.')
+            sentences = [s.strip() for s in sentences if s.strip()]
+            words = preprocessed_text.split()
+        
         unique_words = set(words)
         
         word_count = len(words)
@@ -688,12 +916,18 @@ def render_text_summary_tab(preprocessed_text: str) -> None:
         sent_count = len(sentences)
         unique_word_count = len(unique_words)
         
+        # Avoid division by zero
         avg_word_len = sum(len(word) for word in words) / word_count if word_count > 0 else 0
         avg_sent_len = word_count / sent_count if sent_count > 0 else 0
         lexical_diversity = unique_word_count / word_count if word_count > 0 else 0
         
-        # Display statistics
+        # Display statistics with better formatting
         st.write("#### 📊 Statistik Dasar Teks")
+        
+        if word_count == 0:
+            st.warning("⚠️ Tidak ada kata yang tersedia untuk analisis statistik.")
+            return
+        
         col1, col2, col3 = st.columns(3)
         
         with col1:
@@ -713,13 +947,22 @@ def render_text_summary_tab(preprocessed_text: str) -> None:
             )
         
         # Additional statistics
+        st.write("#### 📈 Statistik Lanjutan")
         col1, col2 = st.columns(2)
         with col1:
             st.metric("Kata Unik", f"{unique_word_count:,}")
+            # Calculate readability estimate
+            if sent_count > 0 and word_count > 0:
+                flesch_approx = 206.835 - (1.015 * avg_sent_len) - (84.6 * (sum(1 for word in words if len(word) > 6) / word_count))
+                st.metric("Skor Keterbacaan (Approx)", f"{max(0, min(100, flesch_approx)):.1f}")
+        
         with col2:
             st.metric("Rasio Pengulangan", f"{(1-lexical_diversity):.3f}")
+            if word_count > 0:
+                long_words_ratio = sum(1 for word in words if len(word) > 6) / word_count
+                st.metric("Rasio Kata Panjang (>6 huruf)", f"{long_words_ratio:.3f}")
         
-        # Text summarization
+        # Text summarization with improved algorithm
         if sent_count > 3:
             st.write("#### 📄 Ringkasan Ekstraktif Otomatis")
             
@@ -732,39 +975,96 @@ def render_text_summary_tab(preprocessed_text: str) -> None:
                 help="Persentase kalimat yang akan dimasukkan dalam ringkasan"
             )
             
-            # Create summary using frequency-based extraction
-            word_freq = nltk.FreqDist(words)
-            sent_scores = {}
-            
-            for i, sent in enumerate(sentences):
-                sent_words = nltk.word_tokenize(sent)
-                sent_scores[i] = sum(word_freq[word] for word in sent_words if word in word_freq)
-            
-            # Select top sentences
-            num_sent_for_summary = max(1, int(len(sentences) * summary_length / 100))
-            top_sent_indices = sorted(
-                sorted(sent_scores.items(), key=lambda x: -x[1])[:num_sent_for_summary],
-                key=lambda x: x[0]
-            )
-            
-            summary = ' '.join(sentences[idx] for idx, _ in top_sent_indices)
-            
-            st.write("**Ringkasan Teks:**")
-            st.info(summary)
-            
-            # Summary statistics
-            compression_ratio = (1 - (len(summary) / len(preprocessed_text))) * 100
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Kompresi", f"{compression_ratio:.1f}%")
-            with col2:
-                st.metric("Kalimat dalam Ringkasan", f"{num_sent_for_summary} dari {sent_count}")
+            try:
+                # Create summary using improved frequency-based extraction
+                word_freq = FreqDist(words)
+                
+                # Filter out very short words for scoring
+                significant_words = [word for word in words if len(word) > 2]
+                word_freq_filtered = FreqDist(significant_words)
+                
+                sent_scores = {}
+                
+                for i, sent in enumerate(sentences):
+                    if not sent.strip():
+                        sent_scores[i] = 0
+                        continue
+                        
+                    try:
+                        sent_words = word_tokenize(sent)
+                    except:
+                        sent_words = sent.split()
+                    
+                    # Score based on word frequency and sentence length
+                    sent_score = 0
+                    for word in sent_words:
+                        if word in word_freq_filtered and len(word) > 2:
+                            sent_score += word_freq_filtered[word]
+                    
+                    # Normalize by sentence length to avoid bias toward long sentences
+                    sent_scores[i] = sent_score / len(sent_words) if len(sent_words) > 0 else 0
+                
+                # Select top sentences
+                num_sent_for_summary = max(1, int(len(sentences) * summary_length / 100))
+                top_sent_indices = sorted(
+                    sorted(sent_scores.items(), key=lambda x: -x[1])[:num_sent_for_summary],
+                    key=lambda x: x[0]
+                )
+                
+                summary = ' '.join(sentences[idx].strip() for idx, _ in top_sent_indices if sentences[idx].strip())
+                
+                if summary.strip():
+                    st.write("**Ringkasan Teks:**")
+                    st.info(summary)
+                    
+                    # Summary statistics
+                    compression_ratio = (1 - (len(summary) / len(preprocessed_text))) * 100
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Kompresi", f"{compression_ratio:.1f}%")
+                    with col2:
+                        st.metric("Kalimat dalam Ringkasan", f"{num_sent_for_summary} dari {sent_count}")
+                else:
+                    st.warning("⚠️ Tidak dapat membuat ringkasan yang bermakna dari teks ini.")
+                    
+            except Exception as e:
+                st.error(f"❌ Gagal membuat ringkasan: {str(e)}")
+                st.info("Coba dengan teks yang lebih panjang atau kurangi tingkat preprocessing.")
                 
         else:
-            st.info("📝 Teks terlalu pendek untuk membuat ringkasan ekstraktif.")
+            st.info("📝 Teks terlalu pendek untuk membuat ringkasan ekstraktif (minimal 4 kalimat diperlukan).")
+            
+            # Suggest improvements
+            with st.expander("💡 Saran untuk meningkatkan analisis"):
+                st.write("""
+                - Upload file dengan lebih banyak data teks
+                - Pastikan preprocessing tidak terlalu agresif
+                - Gabungkan beberapa ulasan untuk analisis yang lebih comprehensive
+                """)
             
     except Exception as e:
         st.error(f"❌ Terjadi kesalahan dalam analisis teks: {str(e)}")
+        
+        # Provide fallback basic statistics
+        with st.expander("ℹ️ Informasi Debug"):
+            st.text(f"Error: {str(e)}")
+            st.text(f"Text length: {len(preprocessed_text)}")
+            st.text(f"Text preview: {preprocessed_text[:100]}...")
+            
+        # Try basic statistics without NLTK
+        try:
+            basic_word_count = len(preprocessed_text.split())
+            basic_char_count = len(preprocessed_text)
+            
+            st.write("**📊 Statistik Dasar (Mode Fallback):**")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Jumlah Kata (perkiraan)", basic_word_count)
+            with col2:
+                st.metric("Jumlah Karakter", basic_char_count)
+                
+        except Exception as fallback_error:
+            st.error(f"❌ Gagal menghitung statistik dasar: {str(fallback_error)}")
 
 # ==============================================================================
 # MAIN ANALYSIS TABS
@@ -877,77 +1177,178 @@ def render_data_analysis() -> None:
         disabled=uploaded_file is None
     )
     
-    # Handle file processing
+    # Handle file processing with better state management
     if uploaded_file is not None and analyze_button:
+        # Validate that we have all required components
+        if not uploaded_file:
+            st.error("⚠️ File tidak tersedia untuk diproses.")
+            return
+            
         st.session_state.analysis_complete = True
         st.session_state.preprocess_options = preprocess_options
         
-        # Clear any selected column from previous runs
+        # Clear any selected column from previous runs to avoid conflicts
         if 'selected_text_column' in st.session_state:
             del st.session_state.selected_text_column
         
-        # Process file
-        success, processed_df, message = process_uploaded_file(
-            uploaded_file, preprocess_options, pipeline
-        )
+        # Clear previous results to avoid displaying stale data
+        if 'csv_results' in st.session_state:
+            del st.session_state.csv_results
         
-        if success and processed_df is not None:
+        # Process file with comprehensive error handling
+        with st.spinner("🔄 Memproses file... Mohon tunggu..."):
+            success, processed_df, message = process_uploaded_file(
+                uploaded_file, preprocess_options, pipeline
+            )
+        
+        if success and processed_df is not None and not processed_df.empty:
             st.session_state.csv_results = processed_df
             st.success(message)
+            
+            # Show immediate preview of results
+            stats = calculate_sentiment_statistics(processed_df)
+            st.info(f"""
+            🎉 **Analisis Berhasil Diselesaikan!**
+            
+            📊 **Ringkasan Hasil:**
+            - Total ulasan dianalisis: {stats['total_count']:,}
+            - Sentimen Positif: {stats['pos_count']:,} ({stats['pos_percentage']:.1f}%)
+            - Sentimen Negatif: {stats['neg_count']:,} ({stats['neg_percentage']:.1f}%)
+            - Rata-rata Confidence: {stats['avg_confidence']:.1f}%
+            """)
         else:
-            st.error(message)
+            st.error(message if message else "❌ Gagal memproses file.")
             st.session_state.analysis_complete = False
+            
+            # Clear any partial results
+            if 'csv_results' in st.session_state:
+                del st.session_state.csv_results
     
     elif analyze_button and uploaded_file is None:
         st.error("⚠️ Silakan upload file CSV terlebih dahulu!")
     
-    # Display results if analysis is complete
+    # Display results if analysis is complete with comprehensive validation
     if (st.session_state.get('analysis_complete', False) and 
         st.session_state.get('csv_results') is not None):
         
         df = st.session_state.csv_results
         
-        if not df.empty:
-            st.markdown("---")
+        # Validate dataframe
+        if df is None or df.empty:
+            st.warning("⚠️ Tidak ada data yang berhasil diproses.")
             
-            # Create sentiment metrics
-            create_sentiment_metrics(df)
-            
-            # Create visualizations
-            create_visualization_charts(df)
-            
-            # Prepare preprocessed text for analysis
-            all_text = " ".join(df['review_text'].astype(str).tolist())
-            preprocess_options = st.session_state.get('preprocess_options', DEFAULT_PREPROCESSING_OPTIONS)
-            preprocessed_all_text = preprocess_text(all_text, preprocess_options)
-            
-            # Render analysis tabs
-            st.markdown("---")
-            st.write("### 🔍 Analisis Mendalam")
-            render_analysis_tabs(df, preprocessed_all_text)
-            
-            # Reset button
-            st.markdown("---")
+            # Provide action options
             col1, col2, col3 = st.columns([1, 1, 1])
             with col2:
-                if st.button("🔄 Analisis File Baru", use_container_width=True):
+                if st.button("🔄 Coba Lagi", use_container_width=True):
                     reset_analysis_state()
                     st.rerun()
+            return
+        
+        # Validate required columns
+        required_cols = ['predicted_sentiment', 'confidence', 'review_text']
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        
+        if missing_cols:
+            st.error(f"❌ Kolom yang diperlukan tidak tersedia: {', '.join(missing_cols)}")
+            
+            # Show available columns for debugging
+            with st.expander("🔍 Debug Info - Kolom yang Tersedia"):
+                st.write("Kolom dalam dataframe:", list(df.columns))
+            
+            if st.button("🔄 Reset dan Coba Lagi"):
+                reset_analysis_state()
+                st.rerun()
+            return
+        
+        # Continue with results display
+        st.divider()
+        
+        # Create sentiment metrics with error handling
+        try:
+            create_sentiment_metrics(df)
+        except Exception as e:
+            st.error(f"❌ Gagal menampilkan metrics: {str(e)}")
+        
+        # Create visualizations with error handling
+        try:
+            create_visualization_charts(df)
+        except Exception as e:
+            st.error(f"❌ Gagal membuat visualisasi: {str(e)}")
+            
+            # Fallback: show basic statistics
+            stats = calculate_sentiment_statistics(df)
+            st.write("**📊 Statistik Dasar (Mode Fallback):**")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Total Ulasan", stats['total_count'])
+                st.metric("Sentimen Positif", f"{stats['pos_count']} ({stats['pos_percentage']:.1f}%)")
+            with col2:
+                st.metric("Sentimen Negatif", f"{stats['neg_count']} ({stats['neg_percentage']:.1f}%)")
+                st.metric("Rata-rata Confidence", f"{stats['avg_confidence']:.1f}%")
+        
+        # Prepare preprocessed text for analysis with validation
+        try:
+            if 'review_text' in df.columns:
+                all_text = " ".join(df['review_text'].astype(str).tolist())
+            else:
+                st.warning("⚠️ Kolom review_text tidak tersedia untuk analisis teks mendalam.")
+                all_text = ""
+            
+            preprocess_options = st.session_state.get('preprocess_options', DEFAULT_PREPROCESSING_OPTIONS)
+            
+            if all_text.strip():
+                preprocessed_all_text = preprocess_text(all_text, preprocess_options)
+            else:
+                preprocessed_all_text = ""
+                
+        except Exception as e:
+            st.warning(f"⚠️ Gagal memproses teks untuk analisis mendalam: {str(e)}")
+            preprocessed_all_text = ""
+        
+        # Render analysis tabs with validation
+        st.divider()
+        st.write("### 🔍 Analisis Mendalam")
+        
+        if preprocessed_all_text.strip():
+            try:
+                render_analysis_tabs(df, preprocessed_all_text)
+            except Exception as e:
+                st.error(f"❌ Gagal menampilkan analisis mendalam: {str(e)}")
+                
+                # Fallback: show only results table
+                st.write("**📋 Tabel Hasil (Mode Fallback):**")
+                display_cols = [col for col in DISPLAY_COLUMNS if col in df.columns]
+                if display_cols:
+                    st.dataframe(df[display_cols], use_container_width=True)
         else:
-            st.warning("⚠️ Tidak ada data yang berhasil diproses.")
+            st.warning("⚠️ Tidak ada teks yang tersedia untuk analisis mendalam.")
+        
+        # Reset button with improved styling
+        st.divider()
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            if st.button("🔄 Analisis File Baru", use_container_width=True, type="secondary"):
+                reset_analysis_state()
+                st.rerun()
     
-    # Footer
-    st.markdown("---")
-    st.markdown("""
-    <div style="text-align: center; padding: 1rem; background-color: rgba(0,0,0,0.05); border-radius: 0.5rem;">
-        <p style="margin: 0; font-size: 0.9rem; color: #666;">
-            © 2025 GoRide Sentiment Analysis Dashboard • Developed by Mhd Adreansyah
-        </p>
-        <p style="margin: 0.5rem 0 0 0; font-size: 0.8rem; color: #888;">
-            🎓 Aplikasi ini merupakan bagian dari Tugas Akhir/Skripsi di bawah perlindungan Hak Cipta
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+    def render_footer():
+        """Render the application footer."""
+        
+        st.markdown("---")
+        st.markdown("""
+        <div style="text-align: center; padding: 1rem; background-color: rgba(0,0,0,0.05); border-radius: 0.5rem;">
+            <p style="margin: 0; font-size: 0.9rem; color: #666;">
+                © 2025 GoRide Sentiment Analysis Dashboard • Developed by Mhd Adreansyah
+            </p>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.8rem; color: #888;">
+                🎓 Aplikasi ini merupakan bagian dari Tugas Akhir/Skripsi di bawah perlindungan Hak Cipta
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Call the footer function
+    render_footer()
 
 
 # ==============================================================================
