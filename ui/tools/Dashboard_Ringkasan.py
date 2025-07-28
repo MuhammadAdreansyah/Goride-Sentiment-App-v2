@@ -20,7 +20,14 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import matplotlib.pyplot as plt
+
+# Optional matplotlib import (for compatibility)
+try:
+    import matplotlib.pyplot as plt
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+    st.warning("⚠️ Matplotlib not available - using Plotly only")
 import base64
 import random
 import os
@@ -36,19 +43,63 @@ try:
 except ImportError:
     psutil = None
 
-# Add parent directory to path for imports
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# ===================================================================
+# FIXED IMPORTS FOR STREAMLIT CLOUD COMPATIBILITY
+# ===================================================================
 
-# Local imports
-from ui.auth import auth
-from ui.utils import (
-    load_sample_data, 
-    get_or_train_model, 
-    preprocess_text, 
-    get_word_frequencies, 
-    get_ngrams, 
-    create_wordcloud
-)
+# Try different import strategies for cloud deployment
+try:
+    # Strategy 1: Direct import (works on Streamlit Cloud)
+    from ui.auth import auth
+    from ui.utils import (
+        load_sample_data, 
+        get_or_train_model, 
+        preprocess_text, 
+        get_word_frequencies, 
+        get_ngrams, 
+        create_wordcloud
+    )
+except ImportError:
+    # Strategy 2: Add parent to path (fallback for local)
+    try:
+        sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+        from ui.auth import auth
+        from ui.utils import (
+            load_sample_data, 
+            get_or_train_model, 
+            preprocess_text, 
+            get_word_frequencies, 
+            get_ngrams, 
+            create_wordcloud
+        )
+    except ImportError:
+        # Strategy 3: Absolute import from root
+        import sys
+        import os
+        root_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        sys.path.insert(0, root_path)
+        try:
+            from ui.auth import auth
+            from ui.utils import (
+                load_sample_data, 
+                get_or_train_model, 
+                preprocess_text, 
+                get_word_frequencies, 
+                get_ngrams, 
+                create_wordcloud
+            )
+        except ImportError as e:
+            st.error(f"❌ Critical Import Error: {str(e)}")
+            st.error("🔧 Please check your deployment configuration and dependencies.")
+            
+            # Debug information for Streamlit Cloud
+            st.error("🔍 **Debug Information:**")
+            st.error(f"- Current file path: {__file__}")
+            st.error(f"- Working directory: {os.getcwd()}")
+            st.error(f"- Python path: {sys.path[:3]}...")
+            st.error(f"- Available files in current dir: {os.listdir('.')[:10]}")
+            
+            st.stop()
 
 # ==============================================================================
 # UTILITY FUNCTIONS

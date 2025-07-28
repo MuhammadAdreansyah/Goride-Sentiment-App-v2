@@ -10,7 +10,24 @@
 
 GoRide Sentiment Analysis adalah aplikasi web berbasis Streamlit yang dirancang untuk menganalisis sentimen (positif/negatif) dari ulasan pengguna layanan GoRide dari Google Play Store. Aplikasi ini menggunakan teknologi Natural Language Processing (NLP) dan Machine Learning untuk mengklasifikasikan sentimen ulasan, serta menyajikan visualisasi dan analisis data yang komprehensif.
 
-![App Screenshot](https://via.placeholder.com/800x400?text=GoRide+Sentiment+Analysis+App)
+## 📁 Struktur Project
+
+```
+SentimenGo/
+├── streamlit_app.py          # 🚀 Main application
+├── README.md                 # 📖 Documentation  
+├── requirements.txt          # 📦 Dependencies
+├── .gitignore               # 🔒 Git configuration
+├── config/                  # ⚙️ App configuration
+├── data/                    # 📊 Datasets
+├── models/                  # 🤖 ML models
+├── ui/                      # 🖥️ Interface components
+├── notebooks/               # 📓 Research notebooks
+├── docs/                    # 📚 Documentation & guides
+└── scripts/                 # 🛠️ Testing & maintenance tools
+```
+
+> 📚 **Dokumentasi Lengkap**: Lihat `docs/PROJECT_STRUCTURE.md` untuk detail struktur project
 
 ## 🚀 Fitur Utama
 
@@ -213,13 +230,85 @@ GoRide Sentiment Analysis adalah aplikasi web berbasis Streamlit yang dirancang 
 | 5.4 | Ketahanan | Menginput teks yang sangat panjang (>5000 karakter) | Aplikasi tetap berfungsi tanpa crash | Aplikasi berhasil memproses teks panjang tanpa error | ✅ Berhasil |
 | 5.5 | Kompatibilitas Browser | Menguji pada browser berbeda (Chrome, Firefox, Safari) | Aplikasi berfungsi dengan baik di semua browser | Aplikasi berjalan baik di semua browser utama | ✅ Berhasil |
 
-## 📞 Kontak & Kontribusi
+## � Keamanan & Privasi
+
+### ⚠️ Penting untuk Setup Lokal
+
+Untuk menjalankan aplikasi ini secara lokal, Anda perlu:
+
+1. **File Kredensial yang Tidak Disertakan dalam Repository:**
+   - `config/client_secret_*.json` (Google OAuth)
+   - `config/*firebase*.json` (Firebase Admin SDK)
+   - `.streamlit/secrets.toml` (Environment variables)
+
+2. **Gunakan Template yang Disediakan:**
+   - `secrets.toml.example` - Template untuk konfigurasi secrets
+   - `config/client_secret_EXAMPLE.json` - Contoh format OAuth
+   - `config/firebase-adminsdk-EXAMPLE.json` - Contoh format Firebase
+
+3. **Cara Setup:**
+   ```bash
+   # Copy template secrets
+   cp secrets.toml.example .streamlit/secrets.toml
+   
+   # Edit dengan kredensial Anda yang sebenarnya
+   # JANGAN commit file secrets yang berisi data asli!
+   ```
+
+### 🛡️ Data yang Diproteksi
+
+### 🛡️ Data yang Diproteksi
+
+File-file berikut sengaja tidak di-commit untuk menjaga keamanan:
+- API Keys & Client Secrets
+- Firebase Admin SDK Keys
+- User Database Credentials
+- Authentication Tokens
+
+## 📚 Dokumentasi & Scripts
+
+### 📖 Dokumentasi Lengkap
+Semua dokumentasi telah diorganisir dalam folder `docs/`:
+
+- **`docs/deployment/`** - Panduan deployment dan troubleshooting production
+- **`docs/debugging/`** - Panduan debugging dan troubleshooting
+- **`docs/testing/`** - Dokumentasi testing dan quality assurance
+- **`docs/PROJECT_STRUCTURE.md`** - Detail struktur project lengkap
+
+### 🛠️ Scripts & Tools
+Scripts untuk development telah diorganisir dalam folder `scripts/`:
+
+- **`scripts/testing/`** - Script testing dan validasi deployment
+- **`scripts/debugging/`** - Script debugging dan troubleshooting  
+- **`scripts/maintenance/`** - Script maintenance dan perbaikan model
+
+**Contoh penggunaan:**
+```bash
+# Test deployment readiness
+python scripts/testing/test_cloud_deployment.py
+
+# Fix model compatibility issues  
+python scripts/maintenance/fix_model_compatibility.py
+```
+
+---
+
+**Status**: ✅ **Ready for Production Deployment**  
+**Last Updated**: 2025-01-28  
+**Maintained by**: SentimenGo Development Team
+- Private Keys & Certificates  
+- Database Credentials
+- Session Cookies
+
+### 📚 Untuk Keperluan Akademis
+
+Repository ini dikonfigurasi untuk transparansi skripsi sambil menjaga keamanan data. Model, dataset, dan kode sumber tersedia untuk review akademis.
+
+## �📞 Kontak & Kontribusi
 
 Jika Anda memiliki pertanyaan atau ingin berkontribusi, jangan ragu untuk:
 
-- 📧 Email: your.email@example.com
-- 🐙 GitHub: [username](https://github.com/username)
-- 🌐 Website: [yourwebsite.com](https://yourwebsite.com)
+- 📧 Email: adreansyahlubis@gmail.com
 
 ## 📜 Lisensi
 

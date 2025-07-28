@@ -20,6 +20,7 @@ import sys
 import time
 import base64
 import traceback
+import pickle
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any, Union
@@ -63,10 +64,50 @@ from Sastrawi.StopWordRemover.StopWordRemoverFactory import StopWordRemoverFacto
 # NLTK SETUP
 # ==============================================================================
 
+# ==============================================================================
+# NLTK SETUP - Enhanced for Streamlit Cloud
+# ==============================================================================
+
+def ensure_nltk_data():
+    """Ensure NLTK data is available for Streamlit Cloud deployment"""
+    import nltk
+    import streamlit as st
+    
+    # List of required NLTK data
+    required_nltk_data = [
+        ('tokenizers/punkt', 'punkt'),
+        ('tokenizers/punkt_tab', 'punkt_tab'),
+        ('corpora/stopwords', 'stopwords'),
+    ]
+    
+    missing_data = []
+    
+    for data_path, data_name in required_nltk_data:
+        try:
+            nltk.data.find(data_path)
+        except LookupError:
+            missing_data.append(data_name)
+    
+    if missing_data:
+        with st.spinner(f'📥 Downloading NLTK data: {", ".join(missing_data)}...'):
+            for data_name in missing_data:
+                try:
+                    nltk.download(data_name, quiet=True)
+                    st.success(f'✅ Downloaded NLTK {data_name}')
+                except Exception as e:
+                    st.warning(f'⚠️ Failed to download NLTK {data_name}: {str(e)}')
+                    # Try alternative approach
+                    try:
+                        nltk.download(data_name, quiet=False)
+                    except Exception as e2:
+                        st.error(f'❌ Critical error downloading NLTK {data_name}: {str(e2)}')
+
+# Initialize NLTK data
 try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt', quiet=True)
+    ensure_nltk_data()
+except Exception as e:
+    import streamlit as st
+    st.warning(f'⚠️ NLTK initialization warning: {str(e)}')
 
 # ==============================================================================
 # CONSTANTS AND CONFIGURATION
@@ -798,7 +839,7 @@ def load_saved_model(model_dir: str = "models") -> Tuple[Any, Any]:
 
 def load_prediction_model(model_dir: str = "models") -> Tuple[Any, Any]:
     """
-    Load model specifically for sentiment prediction.
+    Load model specifically for sentiment prediction with enhanced compatibility.
     
     Args:
         model_dir: Directory containing saved models
@@ -811,26 +852,119 @@ def load_prediction_model(model_dir: str = "models") -> Tuple[Any, Any]:
     
     if os.path.exists(model_path) and os.path.exists(vectorizer_path):
         try:
-            # Suppress sklearn version warnings during model loading
+            # Suppress all sklearn warnings during model loading
             with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
-                warnings.filterwarnings("ignore", message=".*Trying to unpickle estimator.*")
+                warnings.filterwarnings("ignore")
                 
-                svm_model = joblib.load(model_path)
-                tfidf_vectorizer = joblib.load(vectorizer_path)
+                # Load with error handling for version compatibility
+                try:
+                    svm_model = joblib.load(model_path)
+                except Exception as load_error:
+                    st.error(f"Failed to load SVM model: {str(load_error)}")
+                    # Try alternative loading method
+                    try:
+                        import pickle
+                        with open(model_path, 'rb') as f:
+                            svm_model = pickle.load(f)
+                    except Exception as pickle_error:
+                        st.error(f"Alternative loading also failed: {str(pickle_error)}")
+                        return None, None
                 
-                # Validate that models are functional
-                if hasattr(svm_model, 'predict') and hasattr(tfidf_vectorizer, 'transform'):
-                    return svm_model, tfidf_vectorizer
+                try:
+                    tfidf_vectorizer = joblib.load(vectorizer_path)
+                except Exception as load_error:
+                    st.error(f"Failed to load TF-IDF vectorizer: {str(load_error)}")
+                    # Try alternative loading method
+                    try:
+                        import pickle
+                        with open(vectorizer_path, 'rb') as f:
+                            tfidf_vectorizer = pickle.load(f)
+                    except Exception as pickle_error:
+                        st.error(f"Alternative vectorizer loading failed: {str(pickle_error)}")
+                        return None, None
+                
+                # Validate models functionality
+                if (hasattr(svm_model, 'predict') and 
+                    hasattr(tfidf_vectorizer, 'transform')):
+                    
+                    # Test basic functionality
+                    test_text = ["test"]
+                    try:
+                        test_vector = tfidf_vectorizer.transform(test_text)
+                        test_prediction = svm_model.predict(test_vector)
+                        st.success("✅ Models loaded and validated successfully")
+                        return svm_model, tfidf_vectorizer
+                    except Exception as test_error:
+                        st.warning(f"⚠️ Models loaded but failed validation: {str(test_error)}")
+                        return svm_model, tfidf_vectorizer
                 else:
-                    return svm_model, tfidf_vectorizer
+                    st.warning("⚠️ Models missing required methods")
+                    return None, None
                     
         except Exception as e:
-            st.warning(f"⚠️ Failed to load prediction model: {str(e)}")
+            st.error(f"⚠️ Critical error loading prediction model: {str(e)}")
             return None, None
     else:
-        st.warning("⚠️ Prediction model not found. Using fallback model.")
+        st.warning("⚠️ Prediction model not found. Please train the model first.")
         return None, None
+
+
+def check_sklearn_version_compatibility() -> bool:
+    """
+    Check if current sklearn version is compatible with saved models.
+    
+    Returns:
+        True if compatible, False otherwise
+    """
+    try:
+        import sklearn
+        version = sklearn.__version__
+        major, minor, patch = map(int, version.split('.'))
+        
+        # Compatible versions: 1.3.x to 1.5.x
+        if major == 1 and 3 <= minor <= 5:
+            return True
+        else:
+            st.warning(f"⚠️ sklearn version {version} may have compatibility issues")
+            return False
+    except Exception as e:
+        st.error(f"Error checking sklearn version: {str(e)}")
+        return False
+
+
+def safe_model_load(file_path: str, model_type: str = "model") -> Any:
+    """
+    Safely load a pickled model with multiple fallback strategies.
+    
+    Args:
+        file_path: Path to the pickled model file
+        model_type: Type of model for error reporting
+        
+    Returns:
+        Loaded model or None if loading fails
+    """
+    if not os.path.exists(file_path):
+        st.error(f"❌ {model_type} file not found: {file_path}")
+        return None
+        
+    loading_strategies = [
+        ("joblib", lambda: joblib.load(file_path)),
+        ("pickle", lambda: pickle.load(open(file_path, 'rb'))),
+    ]
+    
+    for strategy_name, load_func in loading_strategies:
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore")
+                model = load_func()
+                st.success(f"✅ {model_type} loaded successfully using {strategy_name}")
+                return model
+        except Exception as e:
+            st.warning(f"⚠️ {strategy_name} loading failed for {model_type}: {str(e)}")
+            continue
+    
+    st.error(f"❌ All loading strategies failed for {model_type}")
+    return None
 
 
 def check_model_compatibility() -> Tuple[bool, str]:
@@ -841,28 +975,34 @@ def check_model_compatibility() -> Tuple[bool, str]:
         Tuple of (is_compatible, error_message)
     """
     try:
+        # Check sklearn version first
+        if not check_sklearn_version_compatibility():
+            return False, "sklearn version compatibility issue"
+            
+        # Try to load models quickly to test compatibility
+        model_path = os.path.join("models", "svm_model_predict.pkl")
+        vectorizer_path = os.path.join("models", "tfidf_vectorizer_predict.pkl")
+        
+        if not (os.path.exists(model_path) and os.path.exists(vectorizer_path)):
+            return False, "Model files not found"
+            
         with warnings.catch_warnings():
             warnings.filterwarnings("error", message=".*Trying to unpickle estimator.*")
             
-            # Try loading models
-            svm_model, tfidf_vectorizer = load_saved_model()
-            if svm_model is not None and tfidf_vectorizer is not None:
-                # Try a basic prediction to test functionality
-                test_text = ["test"]
-                try:
-                    tfidf_vectorizer.transform(test_text)
-                    return True, "Models are compatible"
-                except Exception as e:
-                    return False, f"Models loaded but not functional: {str(e)}"
-            else:
-                return False, "Models could not be loaded"
-                
-    except UserWarning as e:
-        if "Trying to unpickle estimator" in str(e):
-            return False, f"Version incompatibility detected: {str(e)}"
-        return False, f"Warning during model loading: {str(e)}"
+            # Quick compatibility test
+            test_model = joblib.load(model_path)
+            test_vectorizer = joblib.load(vectorizer_path)
+            
+            # Test basic functionality
+            test_data = ["test compatibility"]
+            test_vector = test_vectorizer.transform(test_data)
+            test_prediction = test_model.predict(test_vector)
+            
+            return True, "Models are compatible"
+            
     except Exception as e:
-        return False, f"Error checking compatibility: {str(e)}"
+        return False, f"Compatibility check failed: {str(e)}"
+
 
 # ==============================================================================
 # MODEL MANAGEMENT FUNCTIONS
