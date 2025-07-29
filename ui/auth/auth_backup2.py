@@ -55,105 +55,78 @@ LAST_EMAIL_DURATION = 90 * 24 * 60 * 60  # 90 days
 cookie_controller = CookieController()
 
 def get_redirect_uri() -> str:
-    """Smart Environment Detection for Streamlit Cloud vs Local Development
+    """Simple and Reliable Environment Detection for OAuth Redirect
     
-    Uses multiple reliable detection methods WITHOUT forcing production mode.
-    Works seamlessly in both environments.
+    Automatically detects Local vs Cloud environment and returns appropriate redirect URI.
+    Priority: Local detection first, then Cloud detection.
     """
     try:
         import os
+        import socket
         
-        # Get environment variables
+        # Method 1: Check if running on localhost (LOCAL DEVELOPMENT)
+        try:
+            # Check if Streamlit is running on localhost ports
+            current_hostname = socket.gethostname()
+            local_ip = socket.gethostbyname(current_hostname)
+            
+            # Check for localhost indicators
+            if (current_hostname.lower() in ['localhost', '127.0.0.1'] or 
+                local_ip.startswith('127.') or
+                local_ip.startswith('192.168.') or
+                local_ip.startswith('10.')):
+                
+                redirect_uri = st.secrets.get("REDIRECT_URI_DEVELOPMENT", "http://localhost:8501/oauth2callback")
+                logger.info(f"� LOCAL DEVELOPMENT detected - Hostname: {current_hostname}, IP: {local_ip}")
+                logger.info(f"💻 Using LOCAL redirect URI: {redirect_uri}")
+                return redirect_uri
+                
+        except Exception as local_check_error:
+            logger.debug(f"Local environment check failed: {local_check_error}")
+        
+        # Method 2: Check Streamlit Cloud environment variables (CLOUD)
         streamlit_headless = os.getenv('STREAMLIT_SERVER_HEADLESS')
-        streamlit_cloud = os.getenv('STREAMLIT_CLOUD') 
+        streamlit_cloud = os.getenv('STREAMLIT_CLOUD')
         
-        # Debug logging
-        logger.info(f"🔍 Environment Detection - STREAMLIT_SERVER_HEADLESS: {streamlit_headless}")
-        logger.info(f"🔍 Environment Detection - STREAMLIT_CLOUD: {streamlit_cloud}")
+        if streamlit_headless == 'true' or streamlit_cloud:
+            redirect_uri = st.secrets.get("REDIRECT_URI_PRODUCTION", "https://sentimentgo.streamlit.app/oauth2callback")
+            logger.info(f"☁️ STREAMLIT CLOUD detected - HEADLESS: {streamlit_headless}, CLOUD: {streamlit_cloud}")
+            logger.info(f"☁️ Using CLOUD redirect URI: {redirect_uri}")
+            return redirect_uri
         
-        # Emergency override - ONLY for Streamlit Cloud if auto-detection fails
+        # Method 3: Check Python execution path (CLOUD BACKUP)
+        try:
+            import sys
+            python_path = sys.executable.lower()
+            
+            if "/mount/src" in python_path or "streamlit" in python_path:
+                redirect_uri = st.secrets.get("REDIRECT_URI_PRODUCTION", "https://sentimentgo.streamlit.app/oauth2callback")
+                logger.info(f"☁️ CLOUD detected via Python path: {python_path}")
+                logger.info(f"☁️ Using CLOUD redirect URI: {redirect_uri}")
+                return redirect_uri
+                
+        except Exception as path_check_error:
+            logger.debug(f"Python path check failed: {path_check_error}")
+        
+        # Method 4: Manual override (EMERGENCY)
         cloud_override = st.secrets.get("STREAMLIT_CLOUD_OVERRIDE")
         if cloud_override == "true":
             redirect_uri = st.secrets.get("REDIRECT_URI_PRODUCTION", "https://sentimentgo.streamlit.app/oauth2callback")
-            logger.info(f"🚨 Environment: STREAMLIT CLOUD (MANUAL OVERRIDE) - Using: {redirect_uri}")
+            logger.warning(f"🚨 MANUAL OVERRIDE activated - Using CLOUD URI: {redirect_uri}")
             return redirect_uri
         
-        # Method 1: RELIABLE Streamlit Cloud Detection
-        # STREAMLIT_SERVER_HEADLESS is set to 'true' ONLY in Streamlit Cloud
-        if streamlit_headless == 'true':
-            redirect_uri = st.secrets.get("REDIRECT_URI_PRODUCTION", "https://sentimentgo.streamlit.app/oauth2callback")
-            logger.info(f"☁️ Environment: STREAMLIT CLOUD (Headless Mode) - Using: {redirect_uri}")
-            return redirect_uri
-        
-        # Method 2: STREAMLIT_CLOUD environment variable
-        # This is set in Streamlit Cloud environment
-        if streamlit_cloud:
-            redirect_uri = st.secrets.get("REDIRECT_URI_PRODUCTION", "https://sentimentgo.streamlit.app/oauth2callback")
-            logger.info(f"☁️ Environment: STREAMLIT CLOUD (Cloud Env) - Using: {redirect_uri}")
-            return redirect_uri
-            
-        # Method 3: URL/Domain-based detection - ENHANCED for Streamlit Cloud
-        # Check if running on streamlit.app domain by examining the current context
-        try:
-            # Check system environment for cloud indicators
-            import sys
-            python_path = sys.executable
-            
-            # Streamlit Cloud has specific Python path patterns
-            if "/mount/src" in python_path or "streamlit_cloud" in python_path.lower():
-                redirect_uri = st.secrets.get("REDIRECT_URI_PRODUCTION", "https://sentimentgo.streamlit.app/oauth2callback")
-                logger.info(f"☁️ Environment: STREAMLIT CLOUD (Python Path Detection) - Using: {redirect_uri}")
-                return redirect_uri
-                
-        except Exception as e:
-            logger.debug(f"Python path detection failed: {e}")
-            
-        # Method 4: Check platform and hostname patterns for cloud detection
-        try:
-            import platform
-            
-            # Check hostname patterns
-            hostname = platform.node()
-            logger.debug(f"System hostname: {hostname}")
-            
-            # Cloud hostnames are usually not localhost and have specific patterns
-            if hostname and not hostname.startswith('localhost') and not hostname.startswith('127.0.0.1'):
-                # Additional check - if hostname looks like cloud infrastructure
-                if len(hostname) > 8 and ('-' in hostname or hostname.isalnum()):
-                    redirect_uri = st.secrets.get("REDIRECT_URI_PRODUCTION", "https://sentimentgo.streamlit.app/oauth2callback")
-                    logger.info(f"☁️ Environment: STREAMLIT CLOUD (Hostname Pattern: {hostname}) - Using: {redirect_uri}")
-                    return redirect_uri
-                    
-        except Exception as e:
-            logger.debug(f"Platform detection failed: {e}")
-            
-        # Method 5: Port-based detection for local development confirmation
-        try:
-            import socket
-            hostname = socket.gethostname()
-            
-            # If we're explicitly on localhost/127.0.0.1, it's definitely local
-            if hostname in ['localhost', '127.0.0.1'] or hostname.startswith('localhost'):
-                redirect_uri = st.secrets.get("REDIRECT_URI_DEVELOPMENT", "http://localhost:8501/oauth2callback")
-                logger.info(f"💻 Environment: LOCAL DEVELOPMENT (Hostname: {hostname}) - Using: {redirect_uri}")
-                return redirect_uri
-        except Exception as hostname_error:
-            logger.debug(f"Hostname detection failed: {hostname_error}")
-        
-        # DEFAULT: If we reach here and no local indicators found, assume production
-        # This is safer for deployment as it prevents OAuth redirect errors
-        redirect_uri = st.secrets.get("REDIRECT_URI_PRODUCTION", "https://sentimentgo.streamlit.app/oauth2callback")
-        logger.info(f"☁️ Environment: STREAMLIT CLOUD (Default/Fallback) - Using: {redirect_uri}")
+        # DEFAULT: Assume LOCAL DEVELOPMENT (safer for development)
+        redirect_uri = st.secrets.get("REDIRECT_URI_DEVELOPMENT", "http://localhost:8501/oauth2callback")
+        logger.info(f"💻 DEFAULT to LOCAL DEVELOPMENT - Using: {redirect_uri}")
         return redirect_uri
         
     except Exception as main_error:
         logger.error(f"❌ Environment detection failed: {main_error}")
         
-        # Emergency fallback - assume production for safety in cloud deployment
-        redirect_uri = st.secrets.get("REDIRECT_URI_PRODUCTION", "https://sentimentgo.streamlit.app/oauth2callback")
-        logger.warning(f"⚠️ Using production URI as emergency fallback: {redirect_uri}")
+        # Emergency fallback - prefer local for development safety
+        redirect_uri = st.secrets.get("REDIRECT_URI_DEVELOPMENT", "http://localhost:8501/oauth2callback")
+        logger.warning(f"⚠️ Using LOCAL URI as emergency fallback: {redirect_uri}")
         return redirect_uri
-        return "http://localhost:8501/oauth2callback"
 
 def debug_environment_variables() -> Dict[str, Any]:
     """Debug function untuk melihat environment variables Streamlit Cloud
@@ -1501,17 +1474,18 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             progress_container.progress(1.0)
             message_container.caption("✅ Mengarahkan ke halaman login Google...")
             
-            # Simple Meta Refresh Redirect - No visual overlay
-            st.markdown(f"""
-                <meta http-equiv="refresh" content="1;url={google_url}">
-            """, unsafe_allow_html=True)
-            
             # Log the redirect
             logger.info(f"Redirecting to Google OAuth: {google_url}")
             show_success_toast("Mengarahkan ke Google login...")
             
-            # Keep progress and caption visible during redirect
-            time.sleep(1.5)
+            # Clear progress setelah menampilkan pesan sukses, seperti pada login email
+            time.sleep(1.2)  # Beri waktu untuk menampilkan progress completion
+            progress_container.empty()
+            
+            # Redirect setelah progress dibersihkan
+            st.markdown(f"""
+                <meta http-equiv="refresh" content="0;url={google_url}">
+            """, unsafe_allow_html=True)
             
         except Exception as e:
             logger.error(f"Google OAuth redirect failed: {e}")  

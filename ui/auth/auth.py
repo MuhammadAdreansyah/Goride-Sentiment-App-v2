@@ -1474,17 +1474,18 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             progress_container.progress(1.0)
             message_container.caption("✅ Mengarahkan ke halaman login Google...")
             
-            # Simple Meta Refresh Redirect - No visual overlay
-            st.markdown(f"""
-                <meta http-equiv="refresh" content="1;url={google_url}">
-            """, unsafe_allow_html=True)
-            
             # Log the redirect
             logger.info(f"Redirecting to Google OAuth: {google_url}")
             show_success_toast("Mengarahkan ke Google login...")
             
-            # Keep progress and caption visible during redirect
-            time.sleep(1.5)
+            # Clear progress setelah menampilkan pesan sukses, seperti pada login email
+            time.sleep(1.2)  # Beri waktu untuk menampilkan progress completion
+            progress_container.empty()
+            
+            # Redirect setelah progress dibersihkan
+            st.markdown(f"""
+                <meta http-equiv="refresh" content="0;url={google_url}">
+            """, unsafe_allow_html=True)
             
         except Exception as e:
             logger.error(f"Google OAuth redirect failed: {e}")  
