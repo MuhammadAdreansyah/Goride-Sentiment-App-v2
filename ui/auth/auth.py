@@ -1482,9 +1482,16 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             time.sleep(1.2)  # Beri waktu untuk menampilkan progress completion
             progress_container.empty()
             
-            # Redirect setelah progress dibersihkan
+            # Redirect setelah progress dibersihkan - menggunakan JavaScript yang lebih reliable
             st.markdown(f"""
-                <meta http-equiv="refresh" content="0;url={google_url}">
+                <script>
+                    setTimeout(function() {{
+                        window.location.href = "{google_url}";
+                    }}, 100);
+                </script>
+                <div style="text-align: center; padding: 1rem;">
+                    <p>Jika tidak otomatis dialihkan, <a href="{google_url}" target="_self">klik di sini</a></p>
+                </div>
             """, unsafe_allow_html=True)
             
         except Exception as e:
