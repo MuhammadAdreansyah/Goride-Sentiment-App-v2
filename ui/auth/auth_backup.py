@@ -17,7 +17,6 @@ Last Modified: 2025-07-06
 
 import streamlit as st
 import re
-import os
 import asyncio
 import httpx
 import time
@@ -54,135 +53,6 @@ LAST_EMAIL_DURATION = 90 * 24 * 60 * 60  # 90 days
 # Initialize cookie controller
 cookie_controller = CookieController()
 
-def get_redirect_uri() -> str:
-    """Simple and Reliable Environment Detection for OAuth Redirect
-    
-    Automatically detects Local vs Cloud environment and returns appropriate redirect URI.
-    Priority: Local detection first, then Cloud detection.
-    """
-    try:
-        import os
-        import socket
-        
-        # Method 1: Check if running on localhost (LOCAL DEVELOPMENT)
-        try:
-            # Check if Streamlit is running on localhost ports
-            current_hostname = socket.gethostname()
-            local_ip = socket.gethostbyname(current_hostname)
-            
-            # Check for localhost indicators
-            if (current_hostname.lower() in ['localhost', '127.0.0.1'] or 
-                local_ip.startswith('127.') or
-                local_ip.startswith('192.168.') or
-                local_ip.startswith('10.')):
-                
-                redirect_uri = st.secrets.get("REDIRECT_URI_DEVELOPMENT", "http://localhost:8501/oauth2callback")
-                logger.info(f"� LOCAL DEVELOPMENT detected - Hostname: {current_hostname}, IP: {local_ip}")
-                logger.info(f"💻 Using LOCAL redirect URI: {redirect_uri}")
-                return redirect_uri
-                
-        except Exception as local_check_error:
-            logger.debug(f"Local environment check failed: {local_check_error}")
-        
-        # Method 2: Check Streamlit Cloud environment variables (CLOUD)
-        streamlit_headless = os.getenv('STREAMLIT_SERVER_HEADLESS')
-        streamlit_cloud = os.getenv('STREAMLIT_CLOUD')
-        
-        if streamlit_headless == 'true' or streamlit_cloud:
-            redirect_uri = st.secrets.get("REDIRECT_URI_PRODUCTION", "https://sentimentgo.streamlit.app/oauth2callback")
-            logger.info(f"☁️ STREAMLIT CLOUD detected - HEADLESS: {streamlit_headless}, CLOUD: {streamlit_cloud}")
-            logger.info(f"☁️ Using CLOUD redirect URI: {redirect_uri}")
-            return redirect_uri
-        
-        # Method 3: Check Python execution path (CLOUD BACKUP)
-        try:
-            import sys
-            python_path = sys.executable.lower()
-            
-            if "/mount/src" in python_path or "streamlit" in python_path:
-                redirect_uri = st.secrets.get("REDIRECT_URI_PRODUCTION", "https://sentimentgo.streamlit.app/oauth2callback")
-                logger.info(f"☁️ CLOUD detected via Python path: {python_path}")
-                logger.info(f"☁️ Using CLOUD redirect URI: {redirect_uri}")
-                return redirect_uri
-                
-        except Exception as path_check_error:
-            logger.debug(f"Python path check failed: {path_check_error}")
-        
-        # Method 4: Manual override (EMERGENCY)
-        cloud_override = st.secrets.get("STREAMLIT_CLOUD_OVERRIDE")
-        if cloud_override == "true":
-            redirect_uri = st.secrets.get("REDIRECT_URI_PRODUCTION", "https://sentimentgo.streamlit.app/oauth2callback")
-            logger.warning(f"🚨 MANUAL OVERRIDE activated - Using CLOUD URI: {redirect_uri}")
-            return redirect_uri
-        
-        # DEFAULT: Assume LOCAL DEVELOPMENT (safer for development)
-        redirect_uri = st.secrets.get("REDIRECT_URI_DEVELOPMENT", "http://localhost:8501/oauth2callback")
-        logger.info(f"💻 DEFAULT to LOCAL DEVELOPMENT - Using: {redirect_uri}")
-        return redirect_uri
-        
-    except Exception as main_error:
-        logger.error(f"❌ Environment detection failed: {main_error}")
-        
-        # Emergency fallback - prefer local for development safety
-        redirect_uri = st.secrets.get("REDIRECT_URI_DEVELOPMENT", "http://localhost:8501/oauth2callback")
-        logger.warning(f"⚠️ Using LOCAL URI as emergency fallback: {redirect_uri}")
-        return redirect_uri
-
-def debug_environment_variables() -> Dict[str, Any]:
-    """Debug function untuk melihat environment variables Streamlit Cloud
-    
-    Returns:
-        Dict berisi informasi environment variables yang relevan untuk Streamlit Cloud
-    """
-    import os
-    
-    debug_info = {
-        "detected_platform": "unknown",
-        "environment_variables": {},
-        "redirect_uri": None
-    }
-    
-    # Streamlit Cloud specific environment variables
-    streamlit_env_vars = [
-        'STREAMLIT_SERVER_HEADLESS',  # Primary indicator
-        'STREAMLIT_CLOUD',            # Secondary indicator
-        'STREAMLIT_SERVER_PORT',      # Port information
-        'STREAMLIT_BROWSER_GATHER_USAGE_STATS',  # Usage stats setting
-    ]
-    
-    # Collect Streamlit-specific environment variables
-    for var in streamlit_env_vars:
-        value = os.getenv(var)
-        if value is not None:  # Include even if empty string
-            debug_info["environment_variables"][var] = value
-    
-    # Determine platform specifically for Streamlit Cloud
-    if os.getenv('STREAMLIT_SERVER_HEADLESS') == 'true':
-        debug_info["detected_platform"] = "Streamlit Cloud (Primary Detection)"
-    elif os.getenv('STREAMLIT_CLOUD'):
-        debug_info["detected_platform"] = "Streamlit Cloud (Secondary Detection)"
-    else:
-        debug_info["detected_platform"] = "Local Development"
-    
-    # Get redirect URI
-    debug_info["redirect_uri"] = get_redirect_uri()
-    
-    # Add deployment info for Streamlit Cloud
-    if debug_info["detected_platform"].startswith("Streamlit Cloud"):
-        debug_info["deployment_info"] = {
-            "app_url": "https://sentimentgo.streamlit.app",
-            "oauth_callback": "https://sentimentgo.streamlit.app/oauth2callback",
-            "environment": "production"
-        }
-    else:
-        debug_info["deployment_info"] = {
-            "app_url": "http://localhost:8501",
-            "oauth_callback": "http://localhost:8501/oauth2callback",
-            "environment": "development"
-        }
-    
-    return debug_info
-
 def get_firebase_config() -> Dict[str, Any]:
     """Dapatkan konfigurasi Firebase yang terstruktur"""
     try:
@@ -208,7 +78,7 @@ def is_config_valid() -> bool:
     return bool(
         st.secrets.get("GOOGLE_CLIENT_ID") and 
         st.secrets.get("GOOGLE_CLIENT_SECRET") and 
-        (st.secrets.get("REDIRECT_URI_PRODUCTION") or st.secrets.get("REDIRECT_URI_DEVELOPMENT")) and 
+        st.secrets.get("REDIRECT_URI") and 
         st.secrets.get("FIREBASE_API_KEY")
     )
 
@@ -655,7 +525,7 @@ def get_google_authorization_url() -> str:
     base_url = 'https://accounts.google.com/o/oauth2/v2/auth'
     params = {
         'client_id': st.secrets.get("GOOGLE_CLIENT_ID", ""),
-        'redirect_uri': get_redirect_uri(),
+        'redirect_uri': st.secrets.get("REDIRECT_URI", ""),
         'response_type': 'code',
         'scope': 'openid email profile',
         'access_type': 'offline',
@@ -672,7 +542,7 @@ async def exchange_google_token(code: str) -> Tuple[Optional[str], Optional[Dict
             'client_secret': st.secrets.get("GOOGLE_CLIENT_SECRET", ""),
             'code': code,
             'grant_type': 'authorization_code',
-            'redirect_uri': get_redirect_uri()
+            'redirect_uri': st.secrets.get("REDIRECT_URI", "")
         }
 
         try:
@@ -790,16 +660,12 @@ def handle_google_login_callback() -> bool:
                         # Clear progress dan tampilkan pesan sukses
                         time.sleep(1.0)
                         progress_container.empty()
-                        message_container.success("🎉 Login Google berhasil! Mengarahkan ke dashboard...")
-                        show_success_toast("Login Google berhasil! Mengarahkan ke dashboard...")
+                        message_container.success("🎉 Login Google berhasil! Selamat datang!")
+                        show_success_toast("Login Google berhasil!")
                         
-                        # Auto-redirect ke halaman tools setelah login berhasil
                         time.sleep(1.0)  # Beri waktu untuk membaca pesan
                         callback_progress.empty()
-                        st.session_state['should_redirect'] = True
-                        st.session_state['login_success'] = True  # Flag untuk menampilkan toast di main app
-                        st.query_params.clear()  # Clear OAuth params
-                        st.rerun()  # Rerun untuk trigger redirect logic
+                        st.rerun()
                         return True
                     else:
                         # Email belum diverifikasi untuk user non-Google
@@ -961,21 +827,15 @@ def login_user(email: str, password: str, firebase_auth: Any, firestore_client: 
         # Step 4: Complete
         progress_container.progress(1.0)
         # message_container.caption("✅ Login berhasil!")
-        message_container.success("🎉 Login berhasil! Mengarahkan ke dashboard...")
+        message_container.success("🎉 Login berhasil! Selamat datang kembali!")
         
         logger.info(f"Login successful for: {email}")
-        show_success_toast("Login berhasil! Mengarahkan ke dashboard...")
+        show_success_toast("Login berhasil! Selamat datang kembali!")
         
         # Clear progress setelah menampilkan pesan sukses, tapi biarkan message tetap
         time.sleep(1.2)  # Beri waktu untuk menampilkan progress completion
         progress_container.empty()
-        
-        # Auto-redirect ke halaman tools setelah login berhasil
-        st.session_state['should_redirect'] = True
-        st.session_state['login_success'] = True  # Flag untuk menampilkan toast di main app
-        time.sleep(0.5)  # Brief pause untuk user experience
-        st.rerun()  # Rerun untuk trigger redirect logic
-        
+        message_container.empty()
         return True
         
     except Exception as e:
@@ -1462,35 +1322,21 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
     # Handle tombol login Google di luar form
     if google_login_clicked:
         # Gunakan containers yang sudah di-allocate
-        progress_container.progress(0.3)
-        message_container.caption("🔗 Mengarahkan ke Google OAuth...")
-        
+        progress_container.progress(0.1)
+        message_container.caption("🔗 Mengalihkan ke Google OAuth...")
         try:
             google_url = get_google_authorization_url()
-            progress_container.progress(0.7)
-            message_container.caption("🌐 Mempersiapkan redirect ke Google...")
-            
-            # Show final loading state
-            progress_container.progress(1.0)
-            message_container.caption("✅ Mengarahkan ke halaman login Google...")
-            
-            # Simple Meta Refresh Redirect - No visual overlay
-            st.markdown(f"""
-                <meta http-equiv="refresh" content="1;url={google_url}">
-            """, unsafe_allow_html=True)
-            
-            # Log the redirect
-            logger.info(f"Redirecting to Google OAuth: {google_url}")
-            show_success_toast("Mengarahkan ke Google login...")
-            
-            # Keep progress and caption visible during redirect
-            time.sleep(1.5)
-            
-        except Exception as e:
-            logger.error(f"Google OAuth redirect failed: {e}")  
+            progress_container.progress(0.8)
+            message_container.caption("✅ Berhasil mengalihkan ke Google...")
+            time.sleep(0.5)
             progress_container.empty()
-            message_container.error("❌ Gagal mengarahkan ke Google. Silakan coba lagi.")
-            show_error_toast("Gagal mengarahkan ke Google login")
+            st.markdown(f'<meta http-equiv="refresh" content="0; url={google_url}">', unsafe_allow_html=True)
+            time.sleep(1)
+        except Exception as e:
+            logger.error(f"Google OAuth redirect failed: {e}")
+            progress_container.empty()
+            message_container.error("❌ Gagal mengalihkan ke Google. Silakan coba lagi.")
+            show_error_toast("❌ Gagal mengalihkan ke Google. Silakan coba lagi.")
     
     # Tampilkan tips untuk login
     display_auth_tips("login")
@@ -1824,45 +1670,6 @@ def main() -> None:
                 user_email = st.session_state.get('user_email')
                 if user_email and verify_user_exists(user_email, firestore_client):
                     logger.info(f"User authenticated: {user_email}")
-                    
-                    # Auto-redirect ke halaman tools setelah login berhasil
-                    if st.session_state.get('should_redirect', False):
-                        # Clear redirect flag
-                        st.session_state['should_redirect'] = False
-                        
-                        # Show brief redirect message
-                        with st.container():
-                            st.success("🎉 Login berhasil! Mengarahkan ke dashboard...")
-                            
-                            # Simple progress animation
-                            redirect_progress = st.progress(0)
-                            for i in range(0, 101, 5):  # Faster progress
-                                redirect_progress.progress(i / 100)
-                                time.sleep(0.02)  # Very fast animation
-                            
-                            redirect_progress.empty()
-                        
-                        # Clear any query params
-                        st.query_params.clear()
-                        
-                        # Set ready flag untuk main app
-                        st.session_state['ready_for_redirect'] = True
-                        
-                        # Force immediate redirect dengan JavaScript
-                        st.markdown("""
-                            <script>
-                                // Force immediate reload untuk trigger main app workflow
-                                setTimeout(function() {
-                                    window.location.reload();
-                                }, 100);
-                            </script>
-                        """, unsafe_allow_html=True)
-                        
-                        time.sleep(0.5)  # Brief pause
-                        st.stop()  # Stop execution untuk mencegah loading form auth
-                    
-                    # User sudah login dan verified, keluar dari auth.py
-                    # Ini mengindikasikan bahwa auth sudah selesai, main app harus handle routing
                     return
                 else:
                     logger.warning(f"User verification failed: {user_email}")
