@@ -1484,12 +1484,9 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             
             # Redirect setelah progress dibersihkan
             st.markdown(f"""
-                <script>
-                    window.location.href = "{google_url}";
-                </script>
+                <meta http-equiv="refresh" content="0;url={google_url}">
             """, unsafe_allow_html=True)
-            st.stop()
-
+            
         except Exception as e:
             logger.error(f"Google OAuth redirect failed: {e}")  
             progress_container.empty()
