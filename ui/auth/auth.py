@@ -36,18 +36,29 @@ import sys
 from pathlib import Path
 
 class StreamlitAuthFormatter(logging.Formatter):
-    """Lightweight formatter optimized for auth module"""
+    """Lightweight formatter optimized for auth module - unified format"""
     
     def format(self, record):
-        # Simple emoji-based formatting
-        emoji_map = {'INFO': '✅', 'WARNING': '⚠️', 'ERROR': '❌', 'CRITICAL': '🚨', 'DEBUG': '🔍'}
-        emoji = emoji_map.get(record.levelname, 'ℹ️')
+        # Simple timestamp formatting only - let log_event handle icons and prefixes
         timestamp = self.formatTime(record, '%H:%M:%S')
         
-        if record.levelname in ['ERROR', 'CRITICAL']:
-            return f"{emoji} [{timestamp}] {record.levelname} | {record.funcName}() | {record.getMessage()}"
+        # For log_event calls that already have icons, insert timestamp after icon
+        message = record.getMessage()
+        if message.startswith(('ℹ️', '✅', '⚠️', '❌', '🚨', '�')):
+            # Find the first space after the icon to split properly
+            space_index = message.find(' ')
+            if space_index > 0:
+                icon = message[:space_index]  # Get icon part
+                rest = message[space_index + 1:]  # Get everything after first space
+                return f"{icon} [{timestamp}] {rest}"
+            else:
+                # Fallback if no space found
+                return f"{message[:2]} [{timestamp}] {message[2:].strip()}"
         else:
-            return f"{emoji} [{timestamp}] {record.getMessage()}"
+            # For direct logger calls (fallback), use minimal format with icon
+            level_icons = {'INFO': 'ℹ️', 'WARNING': '⚠️', 'ERROR': '❌', 'CRITICAL': '🚨', 'DEBUG': '🔍'}
+            icon = level_icons.get(record.levelname, 'ℹ️')
+            return f"{icon} [{timestamp}] {message}"
 
 def setup_auth_logger():
     """Setup optimized logger for auth module"""
@@ -112,35 +123,35 @@ def log_event(category: str, operation: str, level: str = "info", email: str = "
         details: Additional details (optional)
         error: Exception object for error logging (optional)
     """
-    # Category icons and prefixes
-    icons = {
-        "auth": "🔐", "security": "🔒", "system": "⚙️", 
-        "firebase": "🔥", "user": "👤", "session": "🔐", "config": "🔧"
+    # Single primary icon based on level (most important)
+    primary_icons = {
+        "info": "ℹ️", "success": "✅", "warning": "⚠️", 
+        "error": "❌", "critical": "�", "start": "�"
     }
     
-    # Level icons
-    level_icons = {
-        "info": "ℹ️", "success": "✅", "warning": "⚠️", 
-        "error": "❌", "critical": "🚨", "start": "🚀"
+    # Category prefixes (text-based, no icons)
+    category_prefixes = {
+        "auth": "AUTHENTICATION", "security": "SECURITY", "system": "SYSTEM", 
+        "firebase": "FIREBASE", "user": "USER", "session": "SESSION", "config": "CONFIG"
     }
     
     # Build message components
-    icon = icons.get(category, "📝")
-    level_icon = level_icons.get(level, "ℹ️")
+    icon = primary_icons.get(level, "ℹ️")
+    prefix = category_prefixes.get(category, "LOG")
     email_info = f" [{email}]" if email else ""
     details_info = f" | {details}" if details else ""
     error_info = f" | {str(error)}" if error else ""
     
-    # Format message
-    message = f"{icon} {operation}{email_info}{details_info}{error_info}"
+    # Format message: ICON [TIME] PREFIX: operation [email] | details
+    message = f"{icon} {prefix}: {operation}{email_info}{details_info}{error_info}"
     
-    # Log with appropriate level
+    # Log with appropriate level - message already contains icon
     if level in ["error", "critical"] or error:
-        logger.error(f"{level_icon} {message}")
+        logger.error(message)
     elif level == "warning":
-        logger.warning(f"{level_icon} {message}")
+        logger.warning(message)
     else:
-        logger.info(f"{level_icon} {message}")
+        logger.info(message)
 
 # Convenience functions for common logging patterns
 def log_auth_event(operation: str, level: str = "info", email: str = "", details: str = "", error: Optional[Exception] = None) -> None:
@@ -650,7 +661,7 @@ def check_email_verification_quota() -> Tuple[bool, str]:
         return True, ""
         
     except Exception as e:
-        logger.error(f"Error checking email quota: {e}")
+        log_event("system", "Email quota check", "error", error=e)
         return False, "Error checking email quota"
 
 # =============================================================================
@@ -666,20 +677,22 @@ def initialize_firebase() -> Tuple[Optional[Any], Optional[Any]]:
             firestore_client = st.session_state.get('firestore')
             
             if firebase_auth and firestore_client:
-                logger.info("Using existing Firebase initialization")
+                log_system_event("Using existing Firebase initialization")
                 return firebase_auth, firestore_client
             else:
-                logger.warning("Firebase objects invalid, reinitializing...")
+                log_event("firebase", "Firebase validation", "warning", 
+                         details="Firebase objects invalid, reinitializing...")
                 st.session_state['firebase_initialized'] = False
 
         # Verifikasi environment dan konfigurasi
         if not is_config_valid():
-            logger.error("Configuration validation failed")
+            log_event("config", "Configuration validation", "error")
             return None, None
             
         # Periksa konfigurasi Firebase
         if "firebase" not in st.secrets:
-            logger.critical("Firebase configuration not found in secrets")
+            log_event("config", "Firebase configuration", "critical", 
+                     details="Firebase configuration not found in secrets")
             st.error("🔥 Konfigurasi Firebase tidak ditemukan!")
             return None, None
         
@@ -691,7 +704,8 @@ def initialize_firebase() -> Tuple[Optional[Any], Optional[Any]]:
         missing_fields = [field for field in required_fields if field not in service_account]
         
         if missing_fields:
-            logger.critical(f"Missing Firebase config fields: {missing_fields}")
+            log_event("config", "Firebase configuration", "critical", 
+                     details=f"Missing Firebase config fields: {missing_fields}")
             st.error(f"🔥 Konfigurasi Firebase tidak lengkap! Field yang diperlukan: {', '.join(missing_fields)}")
             return None, None
         
@@ -699,33 +713,33 @@ def initialize_firebase() -> Tuple[Optional[Any], Optional[Any]]:
         if not firebase_admin._apps:
             cred = credentials.Certificate(service_account)
             firebase_admin.initialize_app(cred)
-            logger.info("Firebase Admin SDK initialized successfully")
+            log_firebase_operation("Admin SDK", "success", "Initialized successfully")
         
         # Konfigurasi Pyrebase
         config = get_firebase_config()
         if not config:
-            logger.error("Failed to get Firebase configuration")
+            log_event("config", "Firebase configuration", "error")
             return None, None
         
         # Inisialisasi Pyrebase
         pb = pyrebase.initialize_app(config)
         firebase_auth = pb.auth()
-        logger.info("Pyrebase initialized successfully")
+        log_firebase_operation("Pyrebase", "success", "Initialized successfully")
         
         # Inisialisasi Firestore client
         firestore_client = firestore.client()
-        logger.info("Firestore client initialized successfully")
+        log_firebase_operation("Firestore client", "success", "Initialized successfully")
         
         # Simpan ke session state
         st.session_state['firebase_auth'] = firebase_auth
         st.session_state['firestore'] = firestore_client
         st.session_state['firebase_initialized'] = True
         
-        logger.info("Firebase initialized successfully")
+        log_system_event("Firebase initialization complete", "All services ready")
         return firebase_auth, firestore_client
         
     except Exception as e:
-        logger.critical(f"Firebase initialization failed: {str(e)}")
+        log_event("firebase", "Firebase initialization", "critical", error=e)
         st.error(f"Gagal menginisialisasi Firebase: {str(e)}")
         return None, None
 
@@ -739,11 +753,12 @@ def send_email_verification_safe(firebase_auth: Any, id_token: str, email: str) 
         
         # Kirim verifikasi email
         firebase_auth.send_email_verification(id_token)
-        logger.info(f"Email verification sent to: {email}")
+        log_firebase_operation("Email verification", "success", f"Sent to {email}")
         return True, "Email verifikasi berhasil dikirim"
         
     except Exception as e:
-        logger.error(f"Failed to send email verification to {email}: {e}")
+        log_event("firebase", "Email verification", "error", 
+                 details=f"Failed to send to {email}", error=e)
         toast_msg, detailed_msg = handle_firebase_error(e, "email_verification")
         return False, detailed_msg
 
@@ -754,17 +769,20 @@ def verify_user_exists(user_email: str, firestore_client: Any) -> bool:
         user_doc = firestore_client.collection('users').document(firebase_user.uid).get()
         
         if user_doc.exists:
-            logger.info(f"User {user_email} verified successfully")
+            log_user_action("User verification", user_email, "success")
             return True
         
-        logger.warning(f"User {user_email} has no Firestore data")
+        log_event("firebase", "User data", "warning", 
+                 details=f"User {user_email} has no Firestore data")
         return False
 
     except auth.UserNotFoundError:
-        logger.warning(f"User {user_email} not found in Firebase Auth")
+        log_event("firebase", "User data", "warning", 
+                 details=f"User {user_email} not found in Firebase Auth")
         return False
     except Exception as e:
-        logger.error(f"Error verifying user {user_email}: {str(e)}")
+        log_event("firebase", "User verification", "error", 
+                 details=f"Error verifying user {user_email}", error=e)
         return False
 
 # =============================================================================
@@ -802,7 +820,8 @@ async def exchange_google_token(code: str) -> Tuple[Optional[str], Optional[Dict
             token_data = token_response.json()
             
             if 'access_token' not in token_data:
-                logger.error(f"Token exchange failed: {token_data}")
+                log_event("auth", "Google token exchange", "error", 
+                         details=f"Token exchange failed: {token_data}")
                 return None, None
             
             # Gunakan token untuk mendapatkan info pengguna
@@ -811,13 +830,14 @@ async def exchange_google_token(code: str) -> Tuple[Optional[str], Optional[Dict
             user_info = user_response.json()
             
             if 'email' not in user_info:
-                logger.error(f"User info incomplete: {user_info}")
+                log_event("auth", "User info validation", "error", 
+                         details=f"User info incomplete: {user_info}")
                 return None, None
                 
             return user_info['email'], user_info
 
         except Exception as e:
-            logger.error(f"Google token exchange error: {e}")
+            log_event("auth", "Google token exchange", "error", error=e)
             return None, None
 
 def handle_google_login_callback() -> bool:
@@ -893,9 +913,12 @@ def handle_google_login_callback() -> bool:
                                     'email_verified': True,
                                     'last_login': datetime.now().isoformat()
                                 })
-                                logger.info(f"Updated email verification status for Google user: {user_email}")
+                                log_event("firebase", "Email verification update", "info", 
+                                         details=f"Updated email verification status for Google user: {user_email}")
                             except Exception as update_error:
-                                logger.warning(f"Failed to update email verification for Google user {user_email}: {update_error}")
+                                log_event("firebase", "Email verification update", "warning", 
+                                         details=f"Failed to update email verification for Google user {user_email}", 
+                                         error=update_error)
                         
                         # Step 5: Complete
                         progress_container.progress(1.0)
@@ -906,7 +929,7 @@ def handle_google_login_callback() -> bool:
                         st.session_state['login_time'] = datetime.now()
                         set_remember_me_cookies(user_email, True)
                         
-                        logger.info(f"Google login successful for: {user_email}")
+                        log_auth_success("Google login", user_email, "Authentication successful")
                         
                         # Clear progress dan tampilkan pesan sukses
                         time.sleep(1.0)
@@ -980,7 +1003,7 @@ def handle_google_login_callback() -> bool:
                 return False
 
     except Exception as e:
-        logger.error(f"Google login callback error: {str(e)}")
+        log_event("auth", "Google login callback", "error", error=e)
         if 'callback_progress' in locals():
             callback_progress.empty()
         st.error("❌ Terjadi kesalahan saat memproses login Google")
@@ -1004,10 +1027,11 @@ def sync_email_verified_to_firestore(firebase_auth, firestore_client, user):
         # Update status ke Firestore
         firestore_client.collection('users').document(user['localId']).update({'email_verified': email_verified})
         
-        logger.info(f"Email verification status synced for user {user.get('email', 'unknown')}: {email_verified}")
+        log_firebase_operation("Email verification sync", "success", f"User {user.get('email', 'unknown')}: {email_verified}")
         return email_verified
     except Exception as e:
-        logger.error(f"Gagal sync email_verified: {e}")
+        log_event("firebase", "Email sync", "error", 
+                 details="Gagal sync email_verified", error=e)
         return False
 
 def login_user(email: str, password: str, firebase_auth: Any, firestore_client: Any, 
@@ -1243,7 +1267,8 @@ def register_user(first_name: str, last_name: str, email: str, password: str,
                 success_message = f"✅ Akun berhasil dibuat untuk {email}! Anda dapat login sekarang dan mulai menggunakan aplikasi."
         
         message_container.success(success_message)
-        logger.info(f"Successfully created account for: {email}")
+        log_event("auth", "Account creation", "info", 
+                 details=f"Successfully created account for: {email}")
         show_success_toast("Registrasi berhasil")
         
         # Clear progress setelah menampilkan pesan sukses, tapi biarkan message tetap
@@ -1302,7 +1327,8 @@ def reset_password(email: str, firebase_auth: Any, progress_container: Any, mess
         
         # Kirim email reset password
         firebase_auth.send_password_reset_email(email)
-        logger.info(f"Password reset email sent to: {email}")
+        log_event("auth", "Password reset", "info", 
+                 details=f"Password reset email sent to: {email}")
         
         # Step 5: Complete
         progress_container.progress(1.0)
@@ -1326,7 +1352,8 @@ def logout() -> None:
     """Tangani logout pengguna dengan pembersihan sesi"""
     try:
         user_email = st.session_state.get('user_email')
-        logger.info(f"Logging out user: {user_email}")
+        log_event("auth", "Logout", "info", 
+                 details=f"Logging out user: {user_email}")
         
         # Simpan objek firebase yang diperlukan
         fb_auth = st.session_state.get('firebase_auth', None)
@@ -1355,10 +1382,11 @@ def logout() -> None:
         # Clear cookies but keep last_email for convenience
         clear_remember_me_cookies()
         
-        logger.info("Logout completed successfully")
+        log_event("auth", "Logout", "info", 
+                 details="Logout completed successfully")
         
     except Exception as e:
-        logger.error(f"Logout failed: {str(e)}")
+        log_event("auth", "Logout", "error", error=e)
         show_error_toast(f"Logout failed: {str(e)}")
 
 def show_toast(message: str, toast_type: str = "info") -> None:
@@ -1378,7 +1406,7 @@ def show_toast(message: str, toast_type: str = "info") -> None:
     try:
         st.toast(message, icon=icon)
     except Exception as e:
-        logger.error(f"Failed to show toast: {e}")
+        log_event("system", "Toast notification", "error", error=e)
         st.info(f"{icon} {message}")
 
 # Backward compatibility wrappers
@@ -1570,7 +1598,8 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             try:
                 cookie_controller.set('last_email', email_clean, max_age=LAST_EMAIL_DURATION)
             except Exception as e:
-                logger.warning(f"Failed to save last email: {e}")
+                log_event("system", "Email storage", "warning", 
+                         details="Failed to save last email", error=e)
             
             # Gunakan containers yang sudah di-allocate untuk progress
             progress_container.progress(0.1)
@@ -1583,7 +1612,8 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
                     st.rerun()
             except Exception as login_error:
                 progress_container.empty()
-                logger.error(f"Login process failed: {login_error}")
+                log_event("auth", "Login process", "error", 
+                         details=f"Login process failed: {login_error}")
                 error_str = str(login_error).upper()
                 if "INVALID_LOGIN_CREDENTIALS" in error_str:
                     show_error_toast(f"Email {email_clean} tidak terdaftar dalam sistem kami")
@@ -1621,7 +1651,8 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             message_container.caption("✅ Mengarahkan ke halaman login Google...")
             
             # Log the redirect
-            logger.info(f"Redirecting to Google OAuth: {google_url}")
+            log_event("auth", "Google OAuth redirect", "info", 
+                     details=f"Redirecting to Google OAuth: {google_url}")
             show_success_toast("Mengarahkan ke Google login...")
             
             # Clear progress setelah menampilkan pesan sukses, seperti pada login email
@@ -1634,7 +1665,7 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             """, unsafe_allow_html=True)
             
         except Exception as e:
-            logger.error(f"Google OAuth redirect failed: {e}")  
+            log_event("auth", "Google OAuth redirect", "error", error=e)
             progress_container.empty()
             message_container.error("❌ Gagal mengarahkan ke Google. Silakan coba lagi.")
             show_error_toast("Gagal mengarahkan ke Google login")
