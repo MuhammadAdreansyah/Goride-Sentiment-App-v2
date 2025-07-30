@@ -44,7 +44,7 @@ class StreamlitAuthFormatter(logging.Formatter):
         
         # For log_event calls that already have icons, insert timestamp after icon
         message = record.getMessage()
-        if message.startswith(('ℹ️', '✅', '⚠️', '❌', '🚨', '�')):
+        if message.startswith(('ℹ️', '✅', '⚠️', '❌', '🚨', ' ')):
             # Find the first space after the icon to split properly
             space_index = message.find(' ')
             if space_index > 0:
@@ -126,7 +126,7 @@ def log_event(category: str, operation: str, level: str = "info", email: str = "
     # Single primary icon based on level (most important)
     primary_icons = {
         "info": "ℹ️", "success": "✅", "warning": "⚠️", 
-        "error": "❌", "critical": "�", "start": "�"
+        "error": "❌", "critical": " ", "start": " "
     }
     
     # Category prefixes (text-based, no icons)
