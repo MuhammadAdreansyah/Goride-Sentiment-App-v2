@@ -367,7 +367,7 @@ def get_ngrams(text: Union[str, List[str]], n: int, top_n: int = 10) -> Dict[str
 
 
 def create_wordcloud(text: Union[str, List[str]], max_words: int = 100, 
-                    background_color: str = 'white') -> Optional[Any]:
+                    background_color: str = 'white', colormap: str = 'viridis') -> Optional[Any]:
     """
     Create wordcloud with proper error handling and type checking.
     
@@ -375,6 +375,7 @@ def create_wordcloud(text: Union[str, List[str]], max_words: int = 100,
         text: Text to create wordcloud from
         max_words: Maximum number of words in wordcloud
         background_color: Background color for wordcloud
+        colormap: Colormap for wordcloud colors
         
     Returns:
         WordCloud object or None if error occurs
@@ -395,7 +396,7 @@ def create_wordcloud(text: Union[str, List[str]], max_words: int = 100,
             height=400,
             max_words=max_words,
             background_color=background_color,
-            colormap='viridis',
+            colormap=colormap,
             contour_width=1,
             contour_color='steelblue'
         ).generate(text)

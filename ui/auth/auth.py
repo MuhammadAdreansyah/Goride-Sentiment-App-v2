@@ -1425,7 +1425,6 @@ def show_error_toast(message: str) -> None:
 def show_warning_toast(message: str) -> None:
     """Show warning toast"""
     show_toast(message, "warning")
-    show_toast_notification(message, "⚠️")
 
 def display_auth_tips(auth_type: str) -> None:
     """Tampilkan tips berguna berdasarkan jenis autentikasi"""

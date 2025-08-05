@@ -26,10 +26,8 @@ License: Copyright Protected (Tugas Akhir/Skripsi)
 
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-import base64
 import time
 import sys
 import os
@@ -38,7 +36,7 @@ from typing import Dict, List, Optional, Tuple, Any
 
 # NLTK for text processing
 import nltk
-from nltk.tokenize import sent_tokenize, word_tokenize
+from nltk.tokenize import sent_tokenize, word_tokenize  
 from nltk import FreqDist
 
 # Authentication and utilities
@@ -134,22 +132,26 @@ def safe_progress_cleanup(progress_bar) -> None:
 # ==============================================================================
 
 def initialize_session_state() -> None:
-    """Initialize session state variables for analysis tracking."""
-    if 'analysis_complete' not in st.session_state:
-        st.session_state.analysis_complete = False
-    if 'csv_results' not in st.session_state:
-        st.session_state.csv_results = None
-    if 'preprocess_options' not in st.session_state:
-        st.session_state.preprocess_options = {}
+    """Initialize all session state variables for the analysis module."""
+    session_vars = {
+        'analysis_complete': False,
+        'csv_results': None,
+        'preprocess_options': {},
+        'selected_text_column': None
+    }
+    
+    for key, default_value in session_vars.items():
+        if key not in st.session_state:
+            st.session_state[key] = default_value
 
 
 def reset_analysis_state() -> None:
-    """Reset analysis session state variables."""
+    """Reset all analysis-related session state variables."""
     st.session_state.analysis_complete = False
     
-    # Remove cached results
-    session_keys_to_remove = ['csv_results', 'csv_preprocessed', 'preprocess_options']
-    for key in session_keys_to_remove:
+    # Clean up session state keys
+    keys_to_remove = ['csv_results', 'csv_preprocessed', 'preprocess_options', 'selected_text_column']
+    for key in keys_to_remove:
         if key in st.session_state:
             del st.session_state[key]
 
@@ -425,64 +427,23 @@ def process_uploaded_file(uploaded_file, preprocess_options: Dict[str, bool],
 # VISUALIZATION FUNCTIONS
 # ==============================================================================
 
-def create_sentiment_metrics(df: pd.DataFrame) -> None:
-    """Create sentiment metrics display using calculated statistics."""
+def create_sentiment_metrics(df: pd.DataFrame, stats: Optional[Dict[str, Any]] = None) -> None:
+    """Create clean and structured sentiment metrics display."""
     st.write("### 📊 Hasil Analisis Sentimen")
-    
-    # Calculate all statistics once
-    stats = calculate_sentiment_statistics(df)
-    
-    # Main metrics row
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric(
-            label="Total Ulasan 📋", 
-            value=f"{stats['total_count']:,} ulasan"
-        )
-    
-    with col2:
-        st.metric(
-            label="Sentimen Positif 🟢", 
-            value=f"{stats['pos_count']:,} ulasan", 
-            delta=f"{stats['pos_percentage']:.1f}%"
-        )
-    
-    with col3:
-        st.metric(
-            label="Sentimen Negatif 🔴", 
-            value=f"{stats['neg_count']:,} ulasan", 
-            delta=f"{stats['neg_percentage']:.1f}%"
-        )
-    
-    # Additional metrics row
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric(
-            label="Rata-rata Confidence 🎯",
-            value=f"{stats['avg_confidence']:.1f}%",
-            help="Rata-rata tingkat kepercayaan model dalam prediksi"
-        )
-    
-    with col2:
-        st.metric(
-            label="Sentimen Dominan 👑",
-            value=stats['dominant_sentiment'],
-            delta=f"{stats['dominant_percentage']:.1f}%"
-        )
 
 
-def create_visualization_charts(df: pd.DataFrame) -> None:
-    """Create visualization charts for sentiment analysis using pre-calculated stats."""
-    st.write("### 📈 Visualisasi Hasil")
+def create_visualization_charts(df: pd.DataFrame, stats: Optional[Dict[str, Any]] = None) -> None:
+    """Create clean and focused visualization charts for sentiment analysis."""
     
-    # Get statistics once
-    stats = calculate_sentiment_statistics(df)
+    # Use provided stats or calculate if not provided
+    if stats is None:
+        stats = calculate_sentiment_statistics(df)
     
+    # Create two columns for clean layout
     col1, col2 = st.columns(2)
     
     with col1:
-        # Pie chart
+        # Pie chart for sentiment distribution
         sentiment_counts = df['predicted_sentiment'].value_counts().reset_index()
         sentiment_counts.columns = ['Sentiment', 'Count']
         
@@ -492,20 +453,29 @@ def create_visualization_charts(df: pd.DataFrame) -> None:
             names='Sentiment',
             color='Sentiment',
             color_discrete_map=SENTIMENT_COLORS,
-            title="Distribusi Sentimen",
+            title="📊 Distribusi Sentimen",
             hover_data=['Count']
         )
-        fig_pie.update_traces(textposition='inside', textinfo='percent+label')
-        fig_pie.update_layout(showlegend=True, height=400)
+        fig_pie.update_traces(
+            textposition='inside', 
+            textinfo='percent+label',
+            textfont_size=14
+        )
+        fig_pie.update_layout(
+            showlegend=True, 
+            height=400,
+            title_font_size=16,
+            title_x=0.5
+        )
         st.plotly_chart(fig_pie, use_container_width=True)
     
     with col2:
-        # Gauge chart using pre-calculated percentage
+        # Gauge chart for positive sentiment percentage
         fig_gauge = go.Figure(go.Indicator(
             mode="gauge+number",
             value=stats['pos_percentage'],
             domain={'x': [0, 1], 'y': [0, 1]},
-            title={'text': "Persentase Sentimen Positif"},
+            title={'text': "📈 Persentase Sentimen Positif", 'font': {'size': 16}},
             gauge={
                 'axis': {'range': [0, 100]},
                 'bar': {'color': "green" if stats['pos_percentage'] >= 50 else "red"},
@@ -520,30 +490,10 @@ def create_visualization_charts(df: pd.DataFrame) -> None:
                     'value': stats['pos_percentage']
                 }
             },
-            number={'suffix': "%", 'valueformat': ".1f"}
+            number={'suffix': "%", 'valueformat': ".1f", 'font': {'size': 20}}
         ))
         fig_gauge.update_layout(height=400)
         st.plotly_chart(fig_gauge, use_container_width=True)
-    
-    # Confidence distribution
-    st.write("### 🎯 Distribusi Confidence Score")
-    
-    # Check if data exists
-    if len(df) == 0:
-        st.warning("⚠️ Tidak ada data untuk ditampilkan dalam histogram.")
-        return
-        
-    fig_hist = px.histogram(
-        df, 
-        x='confidence', 
-        color='predicted_sentiment',
-        color_discrete_map=SENTIMENT_COLORS,
-        title="Distribusi Confidence Score berdasarkan Sentimen",
-        labels={'confidence': 'Confidence Score', 'count': 'Jumlah'},
-        nbins=20
-    )
-    fig_hist.update_layout(height=400)
-    st.plotly_chart(fig_hist, use_container_width=True)
 
 # ==============================================================================
 # TAB CONTENT FUNCTIONS
@@ -866,7 +816,8 @@ def render_wordcloud_tab(preprocessed_text: str) -> None:
         wordcloud = create_wordcloud(
             preprocessed_text,
             max_words=max_words,
-            background_color=background_color
+            background_color=background_color,
+            colormap=colormap
         )
         
         if wordcloud is not None:
@@ -1096,6 +1047,26 @@ def render_analysis_tabs(df: pd.DataFrame, preprocessed_text: str) -> None:
         render_text_summary_tab(preprocessed_text)
 
 # ==============================================================================
+# FOOTER FUNCTIONS  
+# ==============================================================================
+
+def render_footer():
+    """Render the application footer."""
+    
+    st.markdown("---")
+    st.markdown("""
+    <div style="text-align: center; padding: 1rem; background-color: rgba(0,0,0,0.05); border-radius: 0.5rem;">
+        <p style="margin: 0; font-size: 0.9rem; color: #666;">
+            © 2025 GoRide Sentiment Analysis Dashboard • Developed by Mhd Adreansyah
+        </p>
+        <p style="margin: 0.5rem 0 0 0; font-size: 0.8rem; color: #888;">
+            🎓 Aplikasi ini merupakan bagian dari Tugas Akhir/Skripsi di bawah perlindungan Hak Cipta
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ==============================================================================
 # MAIN RENDER FUNCTION
 # ==============================================================================
 
@@ -1127,9 +1098,9 @@ def render_data_analysis() -> None:
             st.error("❌ Data training tidak tersedia untuk analisis!")
             st.stop()
         
-        # Load trained model
+        # Load trained model - only get what we need
         preprocessing_options = DEFAULT_PREPROCESSING_OPTIONS.copy()
-        pipeline, accuracy, precision, recall, f1, confusion_mat, X_test, y_test, tfidf_vectorizer, svm_model = get_or_train_model(
+        pipeline, accuracy, precision, recall, f1, _, _, _, _, _ = get_or_train_model(
             data, preprocessing_options
         )
         
@@ -1264,20 +1235,22 @@ def render_data_analysis() -> None:
         # Continue with results display
         st.divider()
         
+        # Calculate statistics once for all visualizations
+        stats = calculate_sentiment_statistics(df)
+        
         # Create sentiment metrics with error handling
         try:
-            create_sentiment_metrics(df)
+            create_sentiment_metrics(df, stats)
         except Exception as e:
             st.error(f"❌ Gagal menampilkan metrics: {str(e)}")
         
         # Create visualizations with error handling
         try:
-            create_visualization_charts(df)
+            create_visualization_charts(df, stats)
         except Exception as e:
             st.error(f"❌ Gagal membuat visualisasi: {str(e)}")
             
-            # Fallback: show basic statistics
-            stats = calculate_sentiment_statistics(df)
+            # Fallback: show basic statistics (stats already calculated)
             st.write("**📊 Statistik Dasar (Mode Fallback):**")
             col1, col2 = st.columns(2)
             with col1:
@@ -1332,22 +1305,7 @@ def render_data_analysis() -> None:
                 reset_analysis_state()
                 st.rerun()
     
-    def render_footer():
-        """Render the application footer."""
-        
-        st.markdown("---")
-        st.markdown("""
-        <div style="text-align: center; padding: 1rem; background-color: rgba(0,0,0,0.05); border-radius: 0.5rem;">
-            <p style="margin: 0; font-size: 0.9rem; color: #666;">
-                © 2025 GoRide Sentiment Analysis Dashboard • Developed by Mhd Adreansyah
-            </p>
-            <p style="margin: 0.5rem 0 0 0; font-size: 0.8rem; color: #888;">
-                🎓 Aplikasi ini merupakan bagian dari Tugas Akhir/Skripsi di bawah perlindungan Hak Cipta
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Call the footer function
+    # Render footer
     render_footer()
 
 
