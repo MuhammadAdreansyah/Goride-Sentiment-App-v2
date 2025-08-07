@@ -445,18 +445,32 @@ def render_dashboard():
     st.markdown("---")
     st.markdown("## 📊 Analisis Detail Data")
     
-    tab1, tab2, tab3, tab4 = st.tabs([
+    # Initialize tab state in session state
+    if 'active_tab' not in st.session_state:
+        st.session_state.active_tab = 0
+    
+    # Create tabs with session state management
+    tab_names = [
         "📊 Distribusi Sentimen", 
         "📈 Tren Waktu", 
         "📝 Analisis Kata", 
         "💡 Insights & Rekomendasi"
-    ])
+    ]
+    
+    # Create the tabs
+    tab1, tab2, tab3, tab4 = st.tabs(tab_names)
+    
+    # Store current tab selection using a unique key
+    current_tab = st.session_state.get('dashboard_tab_selection', 0)
     
     # ==========================================
     # TAB 1: SENTIMENT DISTRIBUTION
     # ==========================================
     
     with tab1:
+        # Update session state when this tab is accessed
+        if st.session_state.get('dashboard_tab_selection', 0) == 0:
+            st.session_state.active_tab = 0
         render_sentiment_distribution_tab(topic_data)
     
     # ==========================================
@@ -464,6 +478,9 @@ def render_dashboard():
     # ==========================================
     
     with tab2:
+        # Update session state when this tab is accessed
+        if st.session_state.get('dashboard_tab_selection', 0) == 1:
+            st.session_state.active_tab = 1
         render_time_trend_tab(topic_data)
     
     # ==========================================
@@ -471,6 +488,9 @@ def render_dashboard():
     # ==========================================
     
     with tab3:
+        # Update session state when this tab is accessed
+        if st.session_state.get('dashboard_tab_selection', 0) == 2:
+            st.session_state.active_tab = 2
         render_word_analysis_tab(topic_data, tfidf_vectorizer)
     
     # ==========================================
@@ -478,6 +498,9 @@ def render_dashboard():
     # ==========================================
     
     with tab4:
+        # Update session state when this tab is accessed
+        if st.session_state.get('dashboard_tab_selection', 0) == 3:
+            st.session_state.active_tab = 3
         render_insights_tab(topic_data)
     
     # ==========================================
@@ -757,7 +780,8 @@ def render_time_trend_tab(topic_data: pd.DataFrame):
             "📅 Periode Agregasi",
             options=["Harian", "Mingguan", "Bulanan"],
             index=1,  # Default to Mingguan
-            help="Pilih periode untuk agregasi data tren"
+            help="Pilih periode untuk agregasi data tren",
+            key="trend_time_granularity"
         )
         
     with col2:
@@ -765,7 +789,8 @@ def render_time_trend_tab(topic_data: pd.DataFrame):
             "📊 Jenis Visualisasi",
             options=["Persentase Positif", "Jumlah Absolut", "Gabungan"],
             index=0,  # Default to Persentase Positif
-            help="Pilih tipe visualisasi yang ingin ditampilkan"
+            help="Pilih tipe visualisasi yang ingin ditampilkan",
+            key="trend_chart_type"
         )
         
     with col3:
@@ -790,7 +815,8 @@ def render_time_trend_tab(topic_data: pd.DataFrame):
                 use_sampling = st.checkbox(
                     "🎯 Aktifkan Sampling", 
                     value=True,
-                    help="Gunakan sampling data untuk meningkatkan performa rendering"
+                    help="Gunakan sampling data untuk meningkatkan performa rendering",
+                    key="trend_use_sampling"
                 )
             with col2:
                 if use_sampling:
@@ -800,7 +826,8 @@ def render_time_trend_tab(topic_data: pd.DataFrame):
                         max_value=10000, 
                         value=sample_size,
                         step=500,
-                        help="Jumlah data yang akan digunakan untuk visualisasi"
+                        help="Jumlah data yang akan digunakan untuk visualisasi",
+                        key="trend_sample_size"
                     )
                     visualization_data = topic_data.sample(n=sample_size, random_state=42)
                     st.success(f"✅ Menggunakan {sample_size:,} sample dari {len(topic_data):,} total data")
