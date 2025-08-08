@@ -769,34 +769,68 @@ def render_time_trend_tab(topic_data: pd.DataFrame):
     st.markdown("### 📈 Analisis Tren Sentimen")
     
     # ==========================================
-    # 1. CONTROL PANEL - Structured Layout
+    # 1. CONTROL PANEL - Unified Settings
     # ==========================================
     
-    # Main controls in organized columns
-    col1, col2, col3 = st.columns([2, 2, 1])
-    
-    with col1:
-        time_granularity = st.selectbox(
-            "📅 Periode Agregasi",
-            options=["Harian", "Mingguan", "Bulanan"],
-            index=1,  # Default to Mingguan
-            help="Pilih periode untuk agregasi data tren",
-            key="trend_time_granularity"
-        )
+    with st.container():
+        st.markdown("### ⚙️ Pengaturan Visualisasi Tren")
+        st.markdown("*Sesuaikan parameter analisis tren sesuai kebutuhan Anda*")
         
-    with col2:
-        chart_type = st.selectbox(
-            "📊 Jenis Visualisasi",
-            options=["Persentase Positif", "Jumlah Absolut", "Gabungan"],
-            index=0,  # Default to Persentase Positif
-            help="Pilih tipe visualisasi yang ingin ditampilkan",
-            key="trend_chart_type"
-        )
+        # Create organized layout
+        col1, col2, col3, col4 = st.columns([2.5, 2.5, 2, 2])
         
-    with col3:
-        st.markdown("**📊 Info Dataset**")
-        total_data = len(topic_data)
-        st.metric("Total Data", f"{total_data:,}")
+        with col1:
+            st.markdown("**📅 Periode Agregasi**")
+            time_granularity = st.selectbox(
+                "Pilih periode untuk agregasi data:",
+                options=["Bulanan", "Mingguan"],  # Removed "Harian" - tidak optimal untuk volume data
+                index=0,  # Default to Bulanan (optimal berdasarkan analisis data)
+                help="📊 Bulanan: Optimal untuk trend analysis (55 ulasan/bulan). Mingguan: Detail analysis (12.7 ulasan/minggu)",
+                key="trend_time_granularity",
+                label_visibility="collapsed"
+            )
+            
+        with col2:
+            st.markdown("**📊 Jenis Visualisasi**")
+            chart_type = st.selectbox(
+                "Pilih tipe visualisasi:",
+                options=["Persentase Positif", "Jumlah Absolut", "Gabungan"],
+                index=0,  # Default to Persentase Positif
+                help="Tentukan bagaimana data ditampilkan dalam grafik",
+                key="trend_chart_type",
+                label_visibility="collapsed"
+            )
+            
+        with col3:
+            st.markdown("**🎨 Tampilan Visual**")
+            show_area_fill = st.checkbox(
+                "Area Fill",
+                value=True,
+                help="Tampilkan area fill untuk efek visual yang lebih menarik",
+                key="trend_show_area_fill"
+            )
+            st.caption("✨ Efek area transparan")
+            
+        with col4:
+            st.markdown("**📊 Info Dataset**")
+            total_data = len(topic_data)
+            
+            # Calculate statistical relevance based on granularity
+            if time_granularity == "Bulanan":
+                avg_per_period = total_data / 12  # Assuming 12 months
+                relevance_status = "🎯 Optimal" if avg_per_period >= 40 else "⚠️ Terbatas" if avg_per_period >= 20 else "❌ Kurang"
+            else:  # Mingguan  
+                avg_per_period = total_data / 52  # Assuming 52 weeks
+                relevance_status = "🎯 Optimal" if avg_per_period >= 15 else "⚠️ Terbatas" if avg_per_period >= 8 else "❌ Kurang"
+            
+            st.metric(
+                label="Total Data", 
+                value=f"{total_data:,}",
+                delta=f"{relevance_status} untuk {time_granularity}",
+                help=f"Statistical relevance untuk granularitas {time_granularity.lower()}: ~{avg_per_period:.1f} data per periode"
+            )
+        
+        st.markdown("---")
 
     # ==========================================
     # 2. ADVANCED SETTINGS (Collapsible)
@@ -839,19 +873,19 @@ def render_time_trend_tab(topic_data: pd.DataFrame):
     # Process time grouping
     with st.spinner("🔄 Memproses data tren..."):
         try:
-            if time_granularity == "Harian":
-                visualization_data['time_group'] = pd.to_datetime(visualization_data['date']).dt.strftime('%Y-%m-%d')
-                unique_periods = visualization_data['time_group'].nunique()
-                if unique_periods > 100:
-                    st.warning("⚠️ Terlalu banyak periode harian. Pertimbangkan menggunakan granularitas mingguan atau bulanan untuk visualisasi yang lebih jelas.")
-            elif time_granularity == "Mingguan":
-                visualization_data['time_group'] = pd.to_datetime(visualization_data['date']).dt.strftime('%Y-W%U')
-            else:  # Bulanan
-                visualization_data['time_group'] = pd.to_datetime(visualization_data['date']).dt.strftime('%Y-%m')
+            # Process time grouping with proper date handling
+            visualization_data['date_parsed'] = pd.to_datetime(visualization_data['date'])
+            
+            if time_granularity == "Mingguan":
+                visualization_data['time_group'] = visualization_data['date_parsed'].dt.strftime('%Y-W%U')
+                visualization_data['time_display'] = visualization_data['date_parsed'].dt.strftime('Minggu %U, %Y')
+            else:  # Bulanan - Default dan optimal
+                visualization_data['time_group'] = visualization_data['date_parsed'].dt.strftime('%Y-%m')
+                visualization_data['time_display'] = visualization_data['date_parsed'].dt.strftime('%B %Y')
             
             # Create trend analysis
-            sentiment_trend = visualization_data.groupby(['time_group', 'sentiment']).size().reset_index(name='count')
-            sentiment_pivot = sentiment_trend.pivot(index='time_group', columns='sentiment', values='count').reset_index()
+            sentiment_trend = visualization_data.groupby(['time_group', 'time_display', 'sentiment']).size().reset_index(name='count')
+            sentiment_pivot = sentiment_trend.pivot(index=['time_group', 'time_display'], columns='sentiment', values='count').reset_index()
             sentiment_pivot.fillna(0, inplace=True)
             
             # Ensure both sentiment columns exist
@@ -866,32 +900,142 @@ def render_time_trend_tab(topic_data: pd.DataFrame):
                 (sentiment_pivot['POSITIF'] / sentiment_pivot['total'] * 100).round(2), 
                 0
             )
+            
+            # Sort by time for proper visualization
+            sentiment_pivot = sentiment_pivot.sort_values('time_group').reset_index(drop=True)
     
-            # Create charts based on selection
+            # Create modern interactive area chart
             if chart_type == "Persentase Positif":
-                trend_chart = px.line(
-                    sentiment_pivot, 
-                    x='time_group', 
-                    y='positive_percentage',
-                    title=f"📈 Tren Persentase Sentimen Positif ({time_granularity})",
-                    labels={'positive_percentage': '% Sentimen Positif', 'time_group': 'Periode'},
-                    markers=True,
-                    template="plotly_white"
-                )
-                trend_chart.update_traces(line_color='#2E8B57', line_width=3, marker_size=8)
-                trend_chart.add_hline(y=50, line_dash="dash", line_color="gray", 
-                                     annotation_text="Baseline 50%", annotation_position="top right")
-                trend_chart.add_hline(y=70, line_dash="dot", line_color="green", 
-                                     annotation_text="Target Optimal 70%", annotation_position="top right")
-                trend_chart.update_layout(
-                    height=500, 
-                    hovermode='x unified',
-                    showlegend=False,
-                    xaxis_title="Periode",
-                    yaxis_title="Persentase Sentimen Positif (%)"
+                # Create the modern area chart similar to the provided image
+                fig = go.Figure()
+                
+                # Add area fill
+                fig.add_trace(go.Scatter(
+                    x=sentiment_pivot['time_display'],
+                    y=sentiment_pivot['positive_percentage'],
+                    mode='lines+markers',
+                    name='Sentimen Positif',
+                    line=dict(
+                        color='#22C55E', 
+                        width=3,
+                        smoothing=1.3  # Smooth curve like in the image
+                    ),
+                    marker=dict(
+                        size=8,
+                        color='#22C55E',
+                        line=dict(width=2, color='white')
+                    ),
+                    fill='tonexty' if show_area_fill else None,  # Conditional fill
+                    fillcolor='rgba(34, 197, 94, 0.2)' if show_area_fill else None,  # Semi-transparent green fill
+                    hovertemplate='''
+                    <b>📅 %{x}</b><br>
+                    📈 Sentimen Positif: <b>%{y:.1f}%</b><br>
+                    📊 Total Ulasan: <b>%{customdata}</b>
+                    <extra></extra>
+                    ''',
+                    customdata=sentiment_pivot['total']
+                ))
+                
+                # Add baseline reference line (like in the image)
+                fig.add_hline(
+                    y=50, 
+                    line_dash="dot", 
+                    line_color="rgba(107, 114, 128, 0.6)", 
+                    line_width=2,
+                    annotation_text="🎯 Baseline (50%)",
+                    annotation_position="top right",
+                    annotation=dict(
+                        font=dict(size=12, color="rgba(107, 114, 128, 0.8)"),
+                        bgcolor="rgba(255, 255, 255, 0.8)",
+                        bordercolor="rgba(107, 114, 128, 0.3)",
+                        borderwidth=1
+                    )
                 )
                 
+                # Add target line
+                fig.add_hline(
+                    y=70, 
+                    line_dash="dash", 
+                    line_color="rgba(34, 197, 94, 0.7)", 
+                    line_width=2,
+                    annotation_text="🎯 Target Optimal (70%)",
+                    annotation_position="bottom right",
+                    annotation=dict(
+                        font=dict(size=12, color="rgba(34, 197, 94, 0.8)"),
+                        bgcolor="rgba(255, 255, 255, 0.8)",
+                        bordercolor="rgba(34, 197, 94, 0.3)",
+                        borderwidth=1
+                    )
+                )
+                
+                # Update layout for modern appearance
+                fig.update_layout(
+                    title=dict(
+                        text=f"📊 Tren Persentase Sentimen Positif - {time_granularity}",
+                        x=0.5,
+                        font=dict(size=20, family="Arial, sans-serif", color="#1F2937")
+                    ),
+                    xaxis=dict(
+                        title="Periode Waktu",
+                        showgrid=True,
+                        gridwidth=1,
+                        gridcolor='rgba(156, 163, 175, 0.2)',
+                        title_font=dict(size=14, color="#4B5563"),
+                        tickfont=dict(size=12, color="#6B7280"),
+                        tickangle=-45
+                    ),
+                    yaxis=dict(
+                        title="Persentase Sentimen Positif (%)",
+                        showgrid=True,
+                        gridwidth=1,
+                        gridcolor='rgba(156, 163, 175, 0.2)',
+                        title_font=dict(size=14, color="#4B5563"),
+                        tickfont=dict(size=12, color="#6B7280"),
+                        range=[0, 100]  # Fixed range for percentage
+                    ),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    height=500,
+                    hovermode='x unified',
+                    showlegend=False,
+                    margin=dict(l=70, r=50, t=80, b=100)
+                )
+                
+                # Add intelligent range selector buttons based on granularity
+                if len(sentiment_pivot) > 6:
+                    if time_granularity == "Bulanan":
+                        range_buttons = [
+                            dict(count=3, label="3 Bulan", step="day", stepmode="backward"),
+                            dict(count=6, label="6 Bulan", step="day", stepmode="backward"), 
+                            dict(count=12, label="1 Tahun", step="day", stepmode="backward"),
+                            dict(step="all", label="Semua Data")
+                        ]
+                    else:  # Mingguan
+                        range_buttons = [
+                            dict(count=4, label="4 Minggu", step="day", stepmode="backward"),
+                            dict(count=12, label="3 Bulan", step="day", stepmode="backward"),
+                            dict(count=24, label="6 Bulan", step="day", stepmode="backward"),
+                            dict(step="all", label="Semua Data")
+                        ]
+                    
+                    fig.update_layout(
+                        xaxis=dict(
+                            rangeselector=dict(
+                                buttons=range_buttons,
+                                bgcolor="rgba(255, 255, 255, 0.8)",
+                                bordercolor="rgba(156, 163, 175, 0.3)",
+                                borderwidth=1,
+                                font=dict(size=11)
+                            ),
+                            rangeslider=dict(visible=False),
+                            type="category"
+                        )
+                    )
+                
+                trend_chart = fig
+                
             elif chart_type == "Jumlah Absolut":
+                # Enhanced dual area chart
                 fig = make_subplots(
                     rows=2, cols=1,
                     subplot_titles=('📈 Tren Ulasan Positif', '📉 Tren Ulasan Negatif'),
@@ -899,67 +1043,110 @@ def render_time_trend_tab(topic_data: pd.DataFrame):
                     shared_xaxes=True
                 )
                 
+                # Positive reviews area
                 fig.add_trace(
                     go.Scatter(
-                        x=sentiment_pivot['time_group'],
+                        x=sentiment_pivot['time_display'],
                         y=sentiment_pivot['POSITIF'],
                         mode='lines+markers',
                         name='Positif',
-                        line=dict(color='#2E8B57', width=3),
-                        marker=dict(size=8),
-                        hovertemplate='<b>Periode:</b> %{x}<br><b>Ulasan Positif:</b> %{y}<extra></extra>'
+                        line=dict(color='#22C55E', width=3, smoothing=1.2),
+                        marker=dict(size=8, color='#22C55E', line=dict(width=2, color='white')),
+                        fill='tonexty' if show_area_fill else None,
+                        fillcolor='rgba(34, 197, 94, 0.2)' if show_area_fill else None,
+                        hovertemplate='<b>📅 %{x}</b><br>😊 Ulasan Positif: <b>%{y}</b><extra></extra>'
                     ),
                     row=1, col=1
                 )
                 
+                # Negative reviews area
                 fig.add_trace(
                     go.Scatter(
-                        x=sentiment_pivot['time_group'],
+                        x=sentiment_pivot['time_display'],
                         y=sentiment_pivot['NEGATIF'],
                         mode='lines+markers',
                         name='Negatif',
-                        line=dict(color='#DC143C', width=3),
-                        marker=dict(size=8),
-                        hovertemplate='<b>Periode:</b> %{x}<br><b>Ulasan Negatif:</b> %{y}<extra></extra>'
+                        line=dict(color='#EF4444', width=3, smoothing=1.2),
+                        marker=dict(size=8, color='#EF4444', line=dict(width=2, color='white')),
+                        fill='tonexty' if show_area_fill else None,
+                        fillcolor='rgba(239, 68, 68, 0.2)' if show_area_fill else None,
+                        hovertemplate='<b>📅 %{x}</b><br>😞 Ulasan Negatif: <b>%{y}</b><extra></extra>'
                     ),
                     row=2, col=1
                 )
                 
                 fig.update_layout(
-                    height=600,
-                    title_text=f"📊 Tren Jumlah Ulasan Positif & Negatif ({time_granularity})",
+                    height=650,
+                    title_text=f"📊 Tren Jumlah Ulasan per Sentimen - {time_granularity}",
                     showlegend=False,
-                    template="plotly_white"
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    hovermode='x unified'
                 )
-                
-                fig.update_xaxes(title_text="Periode", row=2, col=1)
-                fig.update_yaxes(title_text="Jumlah Ulasan Positif", row=1, col=1)
-                fig.update_yaxes(title_text="Jumlah Ulasan Negatif", row=2, col=1)
                 
                 trend_chart = fig
                 
-            else:  # Gabungan
-                trend_chart = px.line(
-                    sentiment_pivot, 
-                    x='time_group', 
-                    y=['POSITIF', 'NEGATIF'],
-                    title=f"📊 Tren Sentimen Positif vs Negatif ({time_granularity})",
-                    labels={'value': 'Jumlah Ulasan', 'time_group': 'Periode', 'variable': 'Sentimen'},
-                    color_discrete_map={'POSITIF': '#2E8B57', 'NEGATIF': '#DC143C'},
-                    markers=True,
-                    template="plotly_white"
-                )
-                trend_chart.update_traces(line_width=3, marker_size=8)
-                trend_chart.update_layout(
-                    legend_title_text='Sentimen',
+            else:  # Gabungan - Interactive dual-line area chart
+                fig = go.Figure()
+                
+                # Add positive sentiment area
+                fig.add_trace(go.Scatter(
+                    x=sentiment_pivot['time_display'],
+                    y=sentiment_pivot['POSITIF'],
+                    mode='lines+markers',
+                    name='😊 Positif',
+                    line=dict(color='#22C55E', width=3, smoothing=1.2),
+                    marker=dict(size=8, color='#22C55E', line=dict(width=2, color='white')),
+                    fill='tonexty' if show_area_fill else None,
+                    fillcolor='rgba(34, 197, 94, 0.15)' if show_area_fill else None,
+                    hovertemplate='<b>📅 %{x}</b><br>😊 Positif: <b>%{y} ulasan</b><extra></extra>'
+                ))
+                
+                # Add negative sentiment area
+                fig.add_trace(go.Scatter(
+                    x=sentiment_pivot['time_display'],
+                    y=sentiment_pivot['NEGATIF'],
+                    mode='lines+markers',
+                    name='😞 Negatif',
+                    line=dict(color='#EF4444', width=3, smoothing=1.2),
+                    marker=dict(size=8, color='#EF4444', line=dict(width=2, color='white')),
+                    fill='tonexty' if show_area_fill else None,
+                    fillcolor='rgba(239, 68, 68, 0.15)' if show_area_fill else None,
+                    hovertemplate='<b>📅 %{x}</b><br>😞 Negatif: <b>%{y} ulasan</b><extra></extra>'
+                ))
+                
+                fig.update_layout(
+                    title=dict(
+                        text=f"📊 Perbandingan Tren Sentimen - {time_granularity}",
+                        x=0.5,
+                        font=dict(size=20, family="Arial, sans-serif", color="#1F2937")
+                    ),
+                    xaxis_title="Periode Waktu",
+                    yaxis_title="Jumlah Ulasan",
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="right",
+                        x=1,
+                        bgcolor="rgba(255, 255, 255, 0.8)",
+                        bordercolor="rgba(156, 163, 175, 0.3)",
+                        borderwidth=1
+                    ),
                     height=500,
                     hovermode='x unified',
-                    xaxis_title="Periode",
-                    yaxis_title="Jumlah Ulasan"
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)'
                 )
+                
+                trend_chart = fig
             
-            # Display the chart
-            st.plotly_chart(trend_chart, use_container_width=True)
+            # Display the chart with enhanced interactivity
+            st.plotly_chart(trend_chart, use_container_width=True, config={
+                'displayModeBar': True,
+                'modeBarButtonsToAdd': ['pan2d', 'select2d', 'lasso2d', 'resetScale2d'],
+                'displaylogo': False
+            })
         
         except Exception as e:
             st.error(f"❌ Error dalam membuat grafik tren: {str(e)}")
