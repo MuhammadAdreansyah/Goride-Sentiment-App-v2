@@ -1634,6 +1634,29 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             </div>
         """, unsafe_allow_html=True)
 
+        # Tombol Login Google via Popup (dalam form agar UI rapi)
+        google_popup_url = get_google_authorization_url(popup=True)
+        _popup_html_in_form = """
+            <div style='width:100%'>
+                <button id=\"google-login-popup\" type=\"button\" style=\"width:100%;border:none;border-radius:20px;height:44px;font-weight:700;background:#0d6efd;color:white;cursor:pointer\">Lanjutkan dengan Google</button>
+            </div>
+            <script>
+                (function(){
+                    var btn = document.getElementById('google-login-popup');
+                    if (btn && !btn.__bound) {
+                        btn.__bound = true;
+                        btn.addEventListener('click', function(){
+                            var w = 520, h = 600;
+                            var y = window.top.outerHeight / 2 + window.top.screenY - ( h / 2);
+                            var x = window.top.outerWidth / 2 + window.top.screenX - ( w / 2);
+                            window.open('__OAUTH_URL__', 'oauth_popup', 'popup=yes,toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes,width='+w+',height='+h+',top='+y+',left='+x);
+                        });
+                    }
+                })();
+            </script>
+        """.replace("__OAUTH_URL__", google_popup_url)
+        components.html(_popup_html_in_form, height=60)
+
         # Placeholder untuk pesan feedback dan progress di bawah tombol Google
         # Gunakan single placeholder dengan containers untuk konsistensi layout
         feedback_placeholder = st.empty()
@@ -1643,29 +1666,8 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             progress_container = st.empty()
             message_container = st.empty()
 
-    # Tombol Login Google via Popup (di luar form)
-    render_oauth_popup_listener()  # pasang listener postMessage sekali
-    google_popup_url = get_google_authorization_url(popup=True)
-    _popup_html = """
-        <div style='width:100%'>
-            <button id="google-login-popup" style="width:100%;border:none;border-radius:20px;height:44px;font-weight:700;background:#0d6efd;color:white;cursor:pointer">Lanjutkan dengan Google</button>
-        </div>
-        <script>
-            (function(){
-                var btn = document.getElementById('google-login-popup');
-                if (btn && !btn.__bound) {
-                    btn.__bound = true;
-                    btn.addEventListener('click', function(){
-                        var w = 520, h = 600;
-                        var y = window.top.outerHeight / 2 + window.top.screenY - ( h / 2);
-                        var x = window.top.outerWidth / 2 + window.top.screenX - ( w / 2);
-                        window.open('__OAUTH_URL__', 'oauth_popup', 'popup=yes,toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes,width='+w+',height='+h+',top='+y+',left='+x);
-                    });
-                }
-            })();
-        </script>
-    """.replace("__OAUTH_URL__", google_popup_url)
-    components.html(_popup_html, height=60)
+    # Pasang listener postMessage di halaman utama (sekali)
+    render_oauth_popup_listener()
 
 
     # Tampilkan pesan error Google OAuth jika ada - menggunakan feedback placeholder
