@@ -439,68 +439,26 @@ def render_dashboard():
         return
     
     # ==========================================
-    # 7. MAIN ANALYSIS TABS
+    # 7. MAIN ANALYSIS TABS (Using st.tabs with persistent selection)
     # ==========================================
     
     st.markdown("---")
     st.markdown("## 📊 Analisis Detail Data")
     
-    # Initialize tab state in session state
-    if 'active_tab' not in st.session_state:
-        st.session_state.active_tab = 0
-    
-    # Create tabs with session state management
-    tab_names = [
-        "📊 Distribusi Sentimen", 
-        "📈 Tren Waktu", 
-        "📝 Analisis Kata", 
-        "💡 Insights & Rekomendasi"
-    ]
-    
-    # Create the tabs
-    tab1, tab2, tab3, tab4 = st.tabs(tab_names)
-    
-    # Store current tab selection using a unique key
-    current_tab = st.session_state.get('dashboard_tab_selection', 0)
-    
-    # ==========================================
-    # TAB 1: SENTIMENT DISTRIBUTION
-    # ==========================================
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📊 Distribusi Sentimen",
+        "📈 Tren Waktu",
+        "📝 Analisis Kata",
+        "💡 Insights & Rekomendasi",
+    ])
     
     with tab1:
-        # Update session state when this tab is accessed
-        if st.session_state.get('dashboard_tab_selection', 0) == 0:
-            st.session_state.active_tab = 0
         render_sentiment_distribution_tab(topic_data)
-    
-    # ==========================================
-    # TAB 2: TIME TREND ANALYSIS
-    # ==========================================
-    
     with tab2:
-        # Update session state when this tab is accessed
-        if st.session_state.get('dashboard_tab_selection', 0) == 1:
-            st.session_state.active_tab = 1
         render_time_trend_tab(topic_data)
-    
-    # ==========================================
-    # TAB 3: WORD ANALYSIS
-    # ==========================================
-    
     with tab3:
-        # Update session state when this tab is accessed
-        if st.session_state.get('dashboard_tab_selection', 0) == 2:
-            st.session_state.active_tab = 2
         render_word_analysis_tab(topic_data, tfidf_vectorizer)
-    
-    # ==========================================
-    # TAB 4: INSIGHTS & RECOMMENDATIONS
-    # ==========================================
-    
     with tab4:
-        # Update session state when this tab is accessed
-        if st.session_state.get('dashboard_tab_selection', 0) == 3:
-            st.session_state.active_tab = 3
         render_insights_tab(topic_data)
     
     # ==========================================
