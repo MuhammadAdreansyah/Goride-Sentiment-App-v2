@@ -16,7 +16,6 @@ Last Modified: 2025-07-06
 """
 
 import streamlit as st
-import streamlit.components.v1 as components
 import re
 import asyncio
 import httpx
@@ -790,70 +789,18 @@ def verify_user_exists(user_email: str, firestore_client: Any) -> bool:
 # GOOGLE OAUTH FUNCTIONS
 # =============================================================================
 
-def get_google_authorization_url(popup: bool = False) -> str:
-    """Bangun URL otorisasi Google OAuth; gunakan state untuk menandai mode popup/normal"""
+def get_google_authorization_url() -> str:
+    """Hasilkan URL otorisasi Google OAuth dengan cakupan yang diperlukan"""
     base_url = 'https://accounts.google.com/o/oauth2/v2/auth'
-    # CSRF/state token
-    state_token = secrets.token_urlsafe(16)
-    st.session_state['oauth_state'] = state_token
-    state_value = ("popup|" if popup else "normal|") + state_token
-
     params = {
         'client_id': st.secrets.get("GOOGLE_CLIENT_ID", ""),
         'redirect_uri': get_redirect_uri(),
         'response_type': 'code',
         'scope': 'openid email profile',
         'access_type': 'offline',
-        'prompt': 'consent',
-        'state': state_value,
+        'prompt': 'consent'
     }
     return f"{base_url}?{urlencode(params)}"
-
-def _parse_oauth_state(state: str) -> Tuple[str, str]:
-    """Parse state menjadi (mode, token)."""
-    try:
-        if '|' in state:
-            mode, token = state.split('|', 1)
-            return mode, token
-        return 'normal', state
-    except Exception:
-        return 'normal', ''
-
-def render_oauth_popup_listener():
-    """Render JS listener untuk menerima kode dari popup via postMessage dan update URL utama."""
-    components.html(
-        """
-        <script>
-        (function(){
-            if (window.__oauthListenerInstalled) return; // avoid duplicates on rerun
-            window.__oauthListenerInstalled = true;
-            window.addEventListener('message', function(event){
-                try {
-                    // Hanya terima dari origin yang sama
-                    if (event.origin !== window.location.origin) return;
-                    var data = event.data || {};
-                    if (data.type !== 'oauth-code' || !data.code) return;
-                    // Ubah state 'popup|token' menjadi 'normal|token' agar diproses normal oleh server
-                    var state = data.state || '';
-                    if (typeof state === 'string' && state.indexOf('popup|') === 0) {
-                        state = 'normal|' + state.split('|')[1];
-                    }
-                    var url = new URL(window.location.href);
-                    url.searchParams.set('code', data.code);
-                    if (state) url.searchParams.set('state', state);
-                    // Pastikan tidak ada flag popup tersisa
-                    url.searchParams.delete('popup');
-                    // Redirect untuk memicu proses server-side
-                    window.location.href = url.toString();
-                } catch(e) {
-                    console.error('OAuth listener error:', e);
-                }
-            }, false);
-        })();
-        </script>
-        """,
-        height=0,
-    )
 
 async def exchange_google_token(code: str) -> Tuple[Optional[str], Optional[Dict]]:
     """Tukar kode otorisasi Google untuk informasi pengguna"""
@@ -904,38 +851,7 @@ def handle_google_login_callback() -> bool:
             st.error("Kode otorisasi Google tidak valid")
             return False
 
-        # Deteksi mode popup dari parameter state
-        state = st.query_params.get('state', '')
-        mode, token = _parse_oauth_state(state) if state else ('normal', '')
-        # Validasi token state jika ada
-        expected = st.session_state.get('oauth_state')
-        if token and expected and token != expected:
-            st.error("State OAuth tidak valid. Silakan coba lagi.")
-            return False
-
-        # Jika mode popup: kirim code ke window utama dan tutup popup tanpa memproses di server sisi popup
-        if mode == 'popup':
-            log_event("auth", "Google login callback (popup)", "info", details="Posting code to opener and closing popup")
-            components.html(
-                """
-                <script>
-                    try {
-                        if (window.opener) {
-                            window.opener.postMessage({
-                                type: 'oauth-code',
-                                code: new URLSearchParams(window.location.search).get('code'),
-                                state: new URLSearchParams(window.location.search).get('state')
-                            }, window.location.origin);
-                        }
-                    } catch(e) { console.error('postMessage failed', e); }
-                    setTimeout(function(){ window.close(); }, 100);
-                </script>
-                """,
-                height=0
-            )
-            st.stop()
-
-        # Tampilkan progress untuk Google callback processing (mode normal)
+        # Tampilkan progress untuk Google callback processing
         callback_progress = st.empty()
         callback_message = st.empty()
         
@@ -1021,37 +937,13 @@ def handle_google_login_callback() -> bool:
                         message_container.success("🎉 Login Google berhasil! Mengarahkan ke dashboard...")
                         show_success_toast("Login Google berhasil! Mengarahkan ke dashboard...")
                         
-                        # Jika mode popup, jangan redirect di popup. Kirim code ke jendela utama dan biarkan popup close.
-                        if mode == 'popup':
-                            callback_progress.empty()
-                            # Render skrip untuk postMessage ke opener dan menutup popup
-                            components.html(
-                                """
-                                <script>
-                                    try {
-                                        if (window.opener) {
-                                            window.opener.postMessage({
-                                                type: 'oauth-code',
-                                                code: new URLSearchParams(window.location.search).get('code'),
-                                                state: new URLSearchParams(window.location.search).get('state')
-                                            }, window.location.origin);
-                                        }
-                                    } catch(e) { console.error('postMessage failed', e); }
-                                    setTimeout(function(){ window.close(); }, 100);
-                                </script>
-                                """,
-                                height=0
-                            )
-                            # Berhentikan eksekusi agar popup tidak render form lagi
-                            st.stop()
-                        else:
-                            # Auto-redirect ke halaman tools setelah login berhasil (mode normal)
-                            time.sleep(1.0)  # Beri waktu untuk membaca pesan
-                            callback_progress.empty()
-                            st.session_state['should_redirect'] = True
-                            st.session_state['login_success'] = True  # Flag untuk menampilkan toast di main app
-                            st.query_params.clear()  # Clear OAuth params
-                            st.rerun()  # Rerun untuk trigger redirect logic
+                        # Auto-redirect ke halaman tools setelah login berhasil
+                        time.sleep(1.0)  # Beri waktu untuk membaca pesan
+                        callback_progress.empty()
+                        st.session_state['should_redirect'] = True
+                        st.session_state['login_success'] = True  # Flag untuk menampilkan toast di main app
+                        st.query_params.clear()  # Clear OAuth params
+                        st.rerun()  # Rerun untuk trigger redirect logic
                         return True
                     else:
                         # Email belum diverifikasi untuk user non-Google
@@ -1634,28 +1526,13 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             </div>
         """, unsafe_allow_html=True)
 
-        # Tombol Login Google via Popup (dalam form agar UI rapi)
-        google_popup_url = get_google_authorization_url(popup=True)
-        _popup_html_in_form = """
-            <div style='width:100%'>
-                <button id=\"google-login-popup\" type=\"button\" style=\"width:100%;border:none;border-radius:20px;height:44px;font-weight:700;background:#0d6efd;color:white;cursor:pointer\">Lanjutkan dengan Google</button>
-            </div>
-            <script>
-                (function(){
-                    var btn = document.getElementById('google-login-popup');
-                    if (btn && !btn.__bound) {
-                        btn.__bound = true;
-                        btn.addEventListener('click', function(){
-                            var w = 520, h = 600;
-                            var y = window.top.outerHeight / 2 + window.top.screenY - ( h / 2);
-                            var x = window.top.outerWidth / 2 + window.top.screenX - ( w / 2);
-                            window.open('__OAUTH_URL__', 'oauth_popup', 'popup=yes,toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes,width='+w+',height='+h+',top='+y+',left='+x);
-                        });
-                    }
-                })();
-            </script>
-        """.replace("__OAUTH_URL__", google_popup_url)
-        components.html(_popup_html_in_form, height=60)
+        # Tombol login Google
+        google_login_clicked = st.form_submit_button(
+            "Lanjutkan dengan Google", 
+            use_container_width=True, 
+            type="primary",
+            disabled=not app_ready
+        )
 
         # Placeholder untuk pesan feedback dan progress di bawah tombol Google
         # Gunakan single placeholder dengan containers untuk konsistensi layout
@@ -1666,8 +1543,29 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             progress_container = st.empty()
             message_container = st.empty()
 
-    # Pasang listener postMessage di halaman utama (sekali)
-    render_oauth_popup_listener()
+    # Tombol Login Google via Popup (di luar form)
+    render_oauth_popup_listener()  # pasang listener postMessage sekali
+    google_popup_url = get_google_authorization_url(popup=True)
+    _popup_html = """
+        <div style='width:100%'>
+            <button id="google-login-popup" style="width:100%;border:none;border-radius:20px;height:44px;font-weight:700;background:#0d6efd;color:white;cursor:pointer">Lanjutkan dengan Google</button>
+        </div>
+        <script>
+            (function(){
+                var btn = document.getElementById('google-login-popup');
+                if (btn && !btn.__bound) {
+                    btn.__bound = true;
+                    btn.addEventListener('click', function(){
+                        var w = 520, h = 600;
+                        var y = window.top.outerHeight / 2 + window.top.screenY - ( h / 2);
+                        var x = window.top.outerWidth / 2 + window.top.screenX - ( w / 2);
+                        window.open('__OAUTH_URL__', 'oauth_popup', 'popup=yes,toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes,width='+w+',height='+h+',top='+y+',left='+x);
+                    });
+                }
+            })();
+        </script>
+    """.replace("__OAUTH_URL__", google_popup_url)
+    components.html(_popup_html, height=60)
 
 
     # Tampilkan pesan error Google OAuth jika ada - menggunakan feedback placeholder
@@ -1760,7 +1658,40 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             show_warning_toast("Silakan isi kolom email dan kata sandi.")
 
 
-    # Tidak ada handler klik khusus untuk Google; tombol link akan melakukan navigasi same-tab
+    # Handle tombol login Google di luar form
+    if google_login_clicked:
+        # Gunakan containers yang sudah di-allocate
+        progress_container.progress(0.3)
+        message_container.caption("🔗 Mengarahkan ke Google OAuth...")
+        
+        try:
+            google_url = get_google_authorization_url()
+            progress_container.progress(0.7)
+            message_container.caption("🌐 Mempersiapkan redirect ke Google...")
+            
+            # Show final loading state
+            progress_container.progress(1.0)
+            message_container.caption("✅ Mengarahkan ke halaman login Google...")
+            
+            # Log the redirect
+            log_event("auth", "Google OAuth redirect", "info", 
+                     details=f"Redirecting to Google OAuth: {google_url}")
+            show_success_toast("Mengarahkan ke Google login...")
+            
+            # Clear progress setelah menampilkan pesan sukses, seperti pada login email
+            time.sleep(SUCCESS_DISPLAY_DURATION)  # Beri waktu untuk menampilkan progress completion
+            progress_container.empty()
+            
+            # Redirect setelah progress dibersihkan
+            st.markdown(f"""
+                <meta http-equiv="refresh" content="0;url={google_url}">
+            """, unsafe_allow_html=True)
+            
+        except Exception as e:
+            log_event("auth", "Google OAuth redirect", "error", error=e)
+            progress_container.empty()
+            message_container.error("❌ Gagal mengarahkan ke Google. Silakan coba lagi.")
+            show_error_toast("Gagal mengarahkan ke Google login")
     
     # Tampilkan tips untuk login
     display_auth_tips("login")
