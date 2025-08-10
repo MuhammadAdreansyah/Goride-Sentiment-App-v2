@@ -21,27 +21,66 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-# Optional matplotlib import (for compatibility)
+# Matplotlib is optional; wordclouds will be shown via image arrays if unavailable
 try:
     import matplotlib.pyplot as plt
     MATPLOTLIB_AVAILABLE = True
-except ImportError:
+except Exception:
     MATPLOTLIB_AVAILABLE = False
-    st.warning("⚠️ Matplotlib not available - using Plotly only")
 import base64
 import random
 import os
 import sys
 import threading
 import time
-from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
+import logging
+from pathlib import Path
 
 # Memory monitoring (optional)
 try:
     import psutil
 except ImportError:
     psutil = None
+
+# ===================================================================
+# CONSTANTS & LOGGING
+# ===================================================================
+
+SENTIMENT_COLORS = {
+    'POSITIF': '#22C55E',  # green
+    'NEGATIF': '#EF4444',  # red
+}
+
+# Legacy colors for bar/pie (kept for visual consistency); fallback to SENTIMENT_COLORS
+LEGACY_COLORS = {
+    'POSITIF': '#2E8B57',  # sea green
+    'NEGATIF': '#DC143C',  # crimson
+}
+
+TARGET_BASELINE = 50
+TARGET_OPTIMAL = 70
+
+def _get_color_map(prefer_legacy: bool = True) -> Dict[str, str]:
+    return LEGACY_COLORS if prefer_legacy else SENTIMENT_COLORS
+
+
+def setup_dashboard_logger() -> logging.Logger:
+    logger = logging.getLogger('dashboard_module')
+    if logger.handlers:
+        return logger
+    logger.setLevel(logging.INFO)
+    try:
+        Path('log').mkdir(exist_ok=True)
+        fh = logging.FileHandler('log/app.log', encoding='utf-8')
+        fh.setLevel(logging.INFO)
+        fh.setFormatter(logging.Formatter('%(asctime)s | %(levelname)s | %(message)s'))
+        logger.addHandler(fh)
+    except Exception:
+        pass
+    return logger
+
+logger = setup_dashboard_logger()
 
 # ===================================================================
 # FIXED IMPORTS FOR STREAMLIT CLOUD COMPATIBILITY
@@ -73,9 +112,7 @@ except ImportError:
             create_wordcloud
         )
     except ImportError:
-        # Strategy 3: Absolute import from root
-        import sys
-        import os
+    # Strategy 3: Absolute import from root
         root_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         sys.path.insert(0, root_path)
         try:
@@ -122,11 +159,17 @@ def safe_create_wordcloud(text: str, max_words: int = 100, max_length: int = 100
     """
     from typing import List, Any as TypingAny
     
-    # Preprocess text to reduce complexity
+    # Ensure text string and reduce complexity if large
+    if not isinstance(text, str):
+        try:
+            text = str(text)
+        except Exception:
+            return None
     if len(text) > max_length:
         st.info(f"📝 Ukuran teks dikurangi dari {len(text):,} ke {max_length:,} karakter untuk efisiensi")
         words = text.split()
-        sampled_words = random.sample(words, min(max_length // 10, len(words)))
+        take = min(max_length // 10, len(words))
+        sampled_words = random.sample(words, take) if take > 0 else words[: max_length // 10]
         text = " ".join(sampled_words)
     
     # Check memory usage if psutil is available
@@ -141,7 +184,7 @@ def safe_create_wordcloud(text: str, max_words: int = 100, max_length: int = 100
             # Fallback to text length check
             if len(text) > 50000:
                 reduce_complexity = True
-    except:
+    except Exception:
         # Error fallback
         if len(text) > 50000:
             reduce_complexity = True
@@ -208,9 +251,13 @@ def calculate_metrics(df: pd.DataFrame) -> Dict[str, Any]:
     pos_percentage = (pos_count / total * 100) if total > 0 else 0
     neg_percentage = (neg_count / total * 100) if total > 0 else 0
     
-    # Calculate today's data
+    # Calculate today's data (robust to dtype)
     today = pd.Timestamp.now().strftime('%Y-%m-%d')
-    today_count = len(df[df['date'] == today])
+    try:
+        date_series = pd.to_datetime(df['date'], errors='coerce')
+        today_count = int((date_series.dt.strftime('%Y-%m-%d') == today).sum())
+    except Exception:
+        today_count = 0
     
     # Calculate satisfaction score
     satisfaction_score = pos_percentage
@@ -267,7 +314,10 @@ def render_dashboard():
     # ==========================================
     
     # Sync login state
-    auth.sync_login_state()
+    try:
+        auth.sync_login_state()
+    except Exception:
+        pass
     
     # Load data and model
     data = load_sample_data()
@@ -314,12 +364,12 @@ def render_dashboard():
         with col1:
             start_date = st.date_input(
                 "📅 Tanggal Mulai", 
-                value=pd.to_datetime(data['date']).min()
+                value=pd.to_datetime(data['date'], errors='coerce').min()
             )
         with col2:
             end_date = st.date_input(
                 "📅 Tanggal Selesai", 
-                value=pd.to_datetime(data['date']).max()
+                value=pd.to_datetime(data['date'], errors='coerce').max()
             )
         with col3:
             st.metric("📊 Total Data Tersedia", len(data))
@@ -334,10 +384,15 @@ def render_dashboard():
     
     # Filter data by date range
     with st.spinner('🔄 Memfilter data berdasarkan rentang waktu...'):
+        date_series = pd.to_datetime(data['date'], errors='coerce')
         filtered_data = data[
-            (pd.to_datetime(data['date']) >= start_date) & 
-            (pd.to_datetime(data['date']) <= end_date)
+            (date_series >= pd.to_datetime(start_date)) & 
+            (date_series <= pd.to_datetime(end_date))
         ]
+        try:
+            logger.info(f"Filter tanggal | start={start_date} end={end_date} hasil={len(filtered_data)}")
+        except Exception:
+            pass
     
     if filtered_data.empty:
         st.error("❌ Tidak ada data yang sesuai dengan filter yang dipilih. Silakan ubah rentang tanggal.")
@@ -476,9 +531,6 @@ def render_sentiment_distribution_tab(topic_data: pd.DataFrame):
     
     st.markdown("### 📊 Distribusi Sentimen Ulasan")
     
-    # Calculate metrics for current topic data
-    topic_metrics = calculate_metrics(topic_data)
-    
     col1, col2 = st.columns(2)
     
     with col1:
@@ -491,7 +543,7 @@ def render_sentiment_distribution_tab(topic_data: pd.DataFrame):
             x='Sentiment', 
             y='Count', 
             color='Sentiment',
-            color_discrete_map={'POSITIF': '#2E8B57', 'NEGATIF': '#DC143C'},
+            color_discrete_map=LEGACY_COLORS,
             title="📊 Jumlah Ulasan per Sentimen",
             text='Count'
         )
@@ -506,7 +558,7 @@ def render_sentiment_distribution_tab(topic_data: pd.DataFrame):
             values='Count', 
             names='Sentiment',
             color='Sentiment',
-            color_discrete_map={'POSITIF': '#2E8B57', 'NEGATIF': '#DC143C'},
+            color_discrete_map=LEGACY_COLORS,
             title="📈 Persentase Distribusi Sentimen"
         )
         pie_chart.update_traces(
@@ -610,10 +662,10 @@ def render_data_exploration_section(topic_data: pd.DataFrame):
     
     # Pagination
     total_pages = max(1, len(filtered_display) // rows_per_page + (0 if len(filtered_display) % rows_per_page == 0 else 1))
-    current_page = st.session_state.get('current_page', 1)
+    current_page = st.session_state.get('dashboard_current_page', 1)
     if current_page > total_pages:
         current_page = 1
-        st.session_state['current_page'] = 1
+        st.session_state['dashboard_current_page'] = 1
     
     # Prepare paginated data
     start_idx = (current_page - 1) * rows_per_page
@@ -685,18 +737,25 @@ def render_data_exploration_section(topic_data: pd.DataFrame):
     for col in final_display.columns:
         final_display[col] = final_display[col].astype(str)
     
-    # Display table
+    # Display table (safe column_config build)
+    try:
+        col_cfg = {}
+        if 'No.' in final_display.columns:
+            col_cfg["No."] = st.column_config.NumberColumn("No.", width="small", format="%d")
+        col_cfg["Teks Ulasan"] = st.column_config.TextColumn("Teks Ulasan", width="large")
+        col_cfg["Sentimen"] = st.column_config.TextColumn("Sentimen", width="medium")
+        if 'Confidence (%)' in final_display.columns:
+            col_cfg["Confidence (%)"] = st.column_config.NumberColumn("Confidence (%)", width="small", format="%.1f%%")
+        if 'Jumlah Kata' in final_display.columns:
+            col_cfg["Jumlah Kata"] = st.column_config.NumberColumn("Jumlah Kata", width="small", format="%d")
+    except Exception:
+        col_cfg = {}
+
     st.dataframe(
         final_display,
         use_container_width=True,
         height=min(600, max(300, len(final_display) * 35 + 100)),
-        column_config={
-            "No.": st.column_config.NumberColumn("No.", width="small", format="%d"),
-            "Teks Ulasan": st.column_config.TextColumn("Teks Ulasan", width="large"),
-            "Sentimen": st.column_config.TextColumn("Sentimen", width="medium"),
-            "Confidence (%)": st.column_config.NumberColumn("Confidence (%)", width="small", format="%.1f%%") if 'Confidence (%)' in final_display.columns else None,
-            "Jumlah Kata": st.column_config.NumberColumn("Jumlah Kata", width="small", format="%d") if 'Jumlah Kata' in final_display.columns else None
-        }
+        column_config=col_cfg or None,
     )
     
     # Navigation controls
@@ -712,7 +771,7 @@ def render_data_exploration_section(topic_data: pd.DataFrame):
             key="page_selector"
         )
         if new_page != current_page:
-            st.session_state['current_page'] = new_page
+            st.session_state['dashboard_current_page'] = new_page
     with col2:
         st.metric("Total Halaman", total_pages)
     with col3:
@@ -832,7 +891,8 @@ def render_time_trend_tab(topic_data: pd.DataFrame):
     with st.spinner("🔄 Memproses data tren..."):
         try:
             # Process time grouping with proper date handling
-            visualization_data['date_parsed'] = pd.to_datetime(visualization_data['date'])
+            visualization_data['date_parsed'] = pd.to_datetime(visualization_data['date'], errors='coerce')
+            visualization_data = visualization_data.dropna(subset=['date_parsed'])
             
             if time_granularity == "Mingguan":
                 visualization_data['time_group'] = visualization_data['date_parsed'].dt.strftime('%Y-W%U')
@@ -874,13 +934,13 @@ def render_time_trend_tab(topic_data: pd.DataFrame):
                     mode='lines+markers',
                     name='Sentimen Positif',
                     line=dict(
-                        color='#22C55E', 
+                        color=SENTIMENT_COLORS['POSITIF'], 
                         width=3,
                         smoothing=1.3  # Smooth curve like in the image
                     ),
                     marker=dict(
                         size=8,
-                        color='#22C55E',
+                        color=SENTIMENT_COLORS['POSITIF'],
                         line=dict(width=2, color='white')
                     ),
                     fill='tonexty' if show_area_fill else None,  # Conditional fill
@@ -894,35 +954,35 @@ def render_time_trend_tab(topic_data: pd.DataFrame):
                     customdata=sentiment_pivot['total']
                 ))
                 
-                # Add baseline reference line (like in the image)
+                # Add baseline reference line (plain text, no background)
                 fig.add_hline(
-                    y=50, 
-                    line_dash="dot", 
-                    line_color="rgba(107, 114, 128, 0.6)", 
+                    y=TARGET_BASELINE,
+                    line_dash="dot",
+                    line_color="rgba(107, 114, 128, 0.6)",
                     line_width=2,
-                    annotation_text="🎯 Baseline (50%)",
+                    annotation_text="Baseline (50%)",
                     annotation_position="top right",
                     annotation=dict(
                         font=dict(size=12, color="rgba(107, 114, 128, 0.8)"),
-                        bgcolor="rgba(255, 255, 255, 0.8)",
-                        bordercolor="rgba(107, 114, 128, 0.3)",
-                        borderwidth=1
+                        bgcolor="rgba(0, 0, 0, 0)",  # transparent background
+                        borderwidth=0,
+                        showarrow=False
                     )
                 )
                 
-                # Add target line
+                # Add target line (plain text, no background)
                 fig.add_hline(
-                    y=70, 
-                    line_dash="dash", 
-                    line_color="rgba(34, 197, 94, 0.7)", 
+                    y=TARGET_OPTIMAL,
+                    line_dash="dash",
+                    line_color="rgba(34, 197, 94, 0.7)",
                     line_width=2,
-                    annotation_text="🎯 Target Optimal (70%)",
+                    annotation_text="Target Optimal (70%)",
                     annotation_position="bottom right",
                     annotation=dict(
                         font=dict(size=12, color="rgba(34, 197, 94, 0.8)"),
-                        bgcolor="rgba(255, 255, 255, 0.8)",
-                        bordercolor="rgba(34, 197, 94, 0.3)",
-                        borderwidth=1
+                        bgcolor="rgba(0, 0, 0, 0)",  # transparent background
+                        borderwidth=0,
+                        showarrow=False
                     )
                 )
                 
@@ -931,6 +991,9 @@ def render_time_trend_tab(topic_data: pd.DataFrame):
                     title=dict(
                         text=f"📊 Tren Persentase Sentimen Positif - {time_granularity}",
                         x=0.5,
+                        y=0.95,
+                        xanchor="center",
+                        yanchor="top",
                         font=dict(size=20, family="Arial, sans-serif", color="#1F2937")
                     ),
                     xaxis=dict(
@@ -956,7 +1019,7 @@ def render_time_trend_tab(topic_data: pd.DataFrame):
                     height=500,
                     hovermode='x unified',
                     showlegend=False,
-                    margin=dict(l=70, r=50, t=80, b=100)
+                    margin=dict(l=70, r=50, t=110, b=100)
                 )
                 
                 # Add intelligent range selector buttons based on granularity
@@ -1008,8 +1071,8 @@ def render_time_trend_tab(topic_data: pd.DataFrame):
                         y=sentiment_pivot['POSITIF'],
                         mode='lines+markers',
                         name='Positif',
-                        line=dict(color='#22C55E', width=3, smoothing=1.2),
-                        marker=dict(size=8, color='#22C55E', line=dict(width=2, color='white')),
+            line=dict(color=SENTIMENT_COLORS['POSITIF'], width=3, smoothing=1.2),
+            marker=dict(size=8, color=SENTIMENT_COLORS['POSITIF'], line=dict(width=2, color='white')),
                         fill='tonexty' if show_area_fill else None,
                         fillcolor='rgba(34, 197, 94, 0.2)' if show_area_fill else None,
                         hovertemplate='<b>📅 %{x}</b><br>😊 Ulasan Positif: <b>%{y}</b><extra></extra>'
@@ -1024,8 +1087,8 @@ def render_time_trend_tab(topic_data: pd.DataFrame):
                         y=sentiment_pivot['NEGATIF'],
                         mode='lines+markers',
                         name='Negatif',
-                        line=dict(color='#EF4444', width=3, smoothing=1.2),
-                        marker=dict(size=8, color='#EF4444', line=dict(width=2, color='white')),
+            line=dict(color=SENTIMENT_COLORS['NEGATIF'], width=3, smoothing=1.2),
+            marker=dict(size=8, color=SENTIMENT_COLORS['NEGATIF'], line=dict(width=2, color='white')),
                         fill='tonexty' if show_area_fill else None,
                         fillcolor='rgba(239, 68, 68, 0.2)' if show_area_fill else None,
                         hovertemplate='<b>📅 %{x}</b><br>😞 Ulasan Negatif: <b>%{y}</b><extra></extra>'
@@ -1035,11 +1098,19 @@ def render_time_trend_tab(topic_data: pd.DataFrame):
                 
                 fig.update_layout(
                     height=650,
-                    title_text=f"📊 Tren Jumlah Ulasan per Sentimen - {time_granularity}",
+                    title=dict(
+                        text=f"📊 Tren Jumlah Ulasan per Sentimen - {time_granularity}",
+                        x=0.5,
+                        y=0.95,
+                        xanchor="center",
+                        yanchor="top",
+                        font=dict(size=20, family="Arial, sans-serif", color="#1F2937")
+                    ),
                     showlegend=False,
                     plot_bgcolor='rgba(0,0,0,0)',
                     paper_bgcolor='rgba(0,0,0,0)',
-                    hovermode='x unified'
+                    hovermode='x unified',
+                    margin=dict(l=70, r=50, t=110, b=100)
                 )
                 
                 trend_chart = fig
@@ -1053,8 +1124,8 @@ def render_time_trend_tab(topic_data: pd.DataFrame):
                     y=sentiment_pivot['POSITIF'],
                     mode='lines+markers',
                     name='😊 Positif',
-                    line=dict(color='#22C55E', width=3, smoothing=1.2),
-                    marker=dict(size=8, color='#22C55E', line=dict(width=2, color='white')),
+                    line=dict(color=SENTIMENT_COLORS['POSITIF'], width=3, smoothing=1.2),
+                    marker=dict(size=8, color=SENTIMENT_COLORS['POSITIF'], line=dict(width=2, color='white')),
                     fill='tonexty' if show_area_fill else None,
                     fillcolor='rgba(34, 197, 94, 0.15)' if show_area_fill else None,
                     hovertemplate='<b>📅 %{x}</b><br>😊 Positif: <b>%{y} ulasan</b><extra></extra>'
@@ -1066,8 +1137,8 @@ def render_time_trend_tab(topic_data: pd.DataFrame):
                     y=sentiment_pivot['NEGATIF'],
                     mode='lines+markers',
                     name='😞 Negatif',
-                    line=dict(color='#EF4444', width=3, smoothing=1.2),
-                    marker=dict(size=8, color='#EF4444', line=dict(width=2, color='white')),
+                    line=dict(color=SENTIMENT_COLORS['NEGATIF'], width=3, smoothing=1.2),
+                    marker=dict(size=8, color=SENTIMENT_COLORS['NEGATIF'], line=dict(width=2, color='white')),
                     fill='tonexty' if show_area_fill else None,
                     fillcolor='rgba(239, 68, 68, 0.15)' if show_area_fill else None,
                     hovertemplate='<b>📅 %{x}</b><br>😞 Negatif: <b>%{y} ulasan</b><extra></extra>'
@@ -1077,6 +1148,9 @@ def render_time_trend_tab(topic_data: pd.DataFrame):
                     title=dict(
                         text=f"📊 Perbandingan Tren Sentimen - {time_granularity}",
                         x=0.5,
+                        y=0.95,
+                        xanchor="center",
+                        yanchor="top",
                         font=dict(size=20, family="Arial, sans-serif", color="#1F2937")
                     ),
                     xaxis_title="Periode Waktu",
@@ -1094,14 +1168,15 @@ def render_time_trend_tab(topic_data: pd.DataFrame):
                     height=500,
                     hovermode='x unified',
                     plot_bgcolor='rgba(0,0,0,0)',
-                    paper_bgcolor='rgba(0,0,0,0)'
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    margin=dict(l=70, r=50, t=110, b=100)
                 )
                 
                 trend_chart = fig
             
             # Display the chart with enhanced interactivity
             st.plotly_chart(trend_chart, use_container_width=True, config={
-                'displayModeBar': True,
+                'displayModeBar': 'hover',
                 'modeBarButtonsToAdd': ['pan2d', 'select2d', 'lasso2d', 'resetScale2d'],
                 'displaylogo': False
             })
@@ -1127,10 +1202,16 @@ def render_word_analysis_tab(topic_data: pd.DataFrame, tfidf_vectorizer):
                 with st.spinner('🎨 Membuat word cloud positif...'):
                     pos_wordcloud = safe_create_wordcloud(positive_text)
                     if pos_wordcloud is not None:
-                        fig, ax = plt.subplots(figsize=(10, 6))
-                        ax.imshow(pos_wordcloud, interpolation='bilinear')
-                        ax.axis('off')
-                        st.pyplot(fig, use_container_width=True)
+                        try:
+                            if MATPLOTLIB_AVAILABLE:
+                                fig, ax = plt.subplots(figsize=(10, 6))
+                                ax.imshow(pos_wordcloud, interpolation='bilinear')
+                                ax.axis('off')
+                                st.pyplot(fig, use_container_width=True)
+                            else:
+                                st.image(pos_wordcloud.to_array(), caption="Wordcloud Positif", use_container_width=True)
+                        except Exception:
+                            st.image(pos_wordcloud.to_array(), caption="Wordcloud Positif", use_container_width=True)
                     else:
                         st.warning("⚠️ Tidak dapat membuat word cloud untuk ulasan positif")
             
@@ -1149,10 +1230,16 @@ def render_word_analysis_tab(topic_data: pd.DataFrame, tfidf_vectorizer):
                 with st.spinner('🎨 Membuat word cloud negatif...'):
                     neg_wordcloud = safe_create_wordcloud(negative_text)
                     if neg_wordcloud is not None:
-                        fig, ax = plt.subplots(figsize=(10, 6))
-                        ax.imshow(neg_wordcloud, interpolation='bilinear')
-                        ax.axis('off')
-                        st.pyplot(fig, use_container_width=True)
+                        try:
+                            if MATPLOTLIB_AVAILABLE:
+                                fig, ax = plt.subplots(figsize=(10, 6))
+                                ax.imshow(neg_wordcloud, interpolation='bilinear')
+                                ax.axis('off')
+                                st.pyplot(fig, use_container_width=True)
+                            else:
+                                st.image(neg_wordcloud.to_array(), caption="Wordcloud Negatif", use_container_width=True)
+                        except Exception:
+                            st.image(neg_wordcloud.to_array(), caption="Wordcloud Negatif", use_container_width=True)
                     else:
                         st.warning("⚠️ Tidak dapat membuat word cloud untuk ulasan negatif")
             
@@ -1197,30 +1284,46 @@ def render_tfidf_analysis(reviews: pd.DataFrame, tfidf_vectorizer, sentiment_lab
     
     st.markdown(f"##### 📊 Kata Kunci Berdasarkan TF-IDF - {sentiment_label}")
     try:
-        feature_names = tfidf_vectorizer.get_feature_names_out()
+        feature_names = np.array(tfidf_vectorizer.get_feature_names_out())
         samples = reviews['teks_preprocessing'].dropna()
         
         if len(samples) > 0:
             tfidf_matrix = tfidf_vectorizer.transform(samples)
-            importance = np.asarray(tfidf_matrix.mean(axis=0)).flatten()
-            indices = np.argsort(importance)[-10:][::-1]
-            
+            importance = np.asarray(tfidf_matrix.mean(axis=0)).ravel()
+
+            # Build DataFrame then filter to ensure only single words with >=3 letters
             words_df = pd.DataFrame({
-                'Kata': [feature_names[i] for i in indices],
-                'Skor TF-IDF': [importance[i] for i in indices]
+                'Kata': feature_names,
+                'Skor TF-IDF': importance
             })
-            
-            fig = px.bar(
-                words_df, 
-                x='Skor TF-IDF', 
-                y='Kata', 
-                orientation='h',
-                title=f"Top 10 Kata Kunci {sentiment_label}",
-                color='Skor TF-IDF',
-                color_continuous_scale=color_scale
-            )
-            fig.update_layout(height=400, yaxis={'categoryorder':'total ascending'})
-            st.plotly_chart(fig, use_container_width=True)
+
+            # Filter rules:
+            # - single word (no spaces)
+            # - alphabetic only (exclude numbers/punctuations)
+            # - length >= 3 (remove 1-2 letter tokens)
+            words_df = words_df[
+                (~words_df['Kata'].str.contains(r"\s", regex=True)) &
+                (words_df['Kata'].str.len() >= 3) &
+                (words_df['Kata'].str.match(r'^[A-Za-zÀ-ÖØ-öø-ÿ]+$', na=False))
+            ]
+
+            # Take top 10 by score
+            words_df = words_df.sort_values('Skor TF-IDF', ascending=False).head(10)
+
+            if not words_df.empty:
+                fig = px.bar(
+                    words_df.sort_values('Skor TF-IDF'),
+                    x='Skor TF-IDF', 
+                    y='Kata', 
+                    orientation='h',
+                    title=f"Top 10 Kata Kunci {sentiment_label}",
+                    color='Skor TF-IDF',
+                    color_continuous_scale=color_scale
+                )
+                fig.update_layout(height=400, yaxis={'categoryorder':'total ascending'})
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("📝 Tidak ada kata kunci yang memenuhi kriteria (1 kata, >=3 huruf)")
         else:
             st.info("📝 Tidak ada teks terproses untuk analisis TF-IDF")
     except Exception as e:
