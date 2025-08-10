@@ -792,13 +792,21 @@ def verify_user_exists(user_email: str, firestore_client: Any) -> bool:
 def get_google_authorization_url() -> str:
     """Hasilkan URL otorisasi Google OAuth dengan cakupan yang diperlukan"""
     base_url = 'https://accounts.google.com/o/oauth2/v2/auth'
+    # Generate and store CSRF state to validate on callback
+    try:
+        if 'oauth_state' not in st.session_state:
+            st.session_state['oauth_state'] = secrets.token_urlsafe(16)
+        oauth_state = st.session_state['oauth_state']
+    except Exception:
+        oauth_state = ''
     params = {
         'client_id': st.secrets.get("GOOGLE_CLIENT_ID", ""),
         'redirect_uri': get_redirect_uri(),
         'response_type': 'code',
         'scope': 'openid email profile',
         'access_type': 'offline',
-        'prompt': 'consent'
+        'prompt': 'consent',
+        'state': oauth_state
     }
     return f"{base_url}?{urlencode(params)}"
 
@@ -849,6 +857,18 @@ def handle_google_login_callback() -> bool:
         code = st.query_params.get('code')
         if not code or not isinstance(code, str):
             st.error("Kode otorisasi Google tidak valid")
+            return False
+
+        # Validate optional state to mitigate CSRF
+        incoming_state = st.query_params.get('state')
+        expected_state = st.session_state.get('oauth_state')
+        if expected_state and incoming_state != expected_state:
+            st.error("State OAuth tidak valid. Silakan coba login kembali.")
+            show_error_toast("State OAuth tidak valid")
+            # Clear params and state
+            st.query_params.clear()
+            if 'oauth_state' in st.session_state:
+                del st.session_state['oauth_state']
             return False
 
         # Tampilkan progress untuk Google callback processing
@@ -943,6 +963,8 @@ def handle_google_login_callback() -> bool:
                         st.session_state['should_redirect'] = True
                         st.session_state['login_success'] = True  # Flag untuk menampilkan toast di main app
                         st.query_params.clear()  # Clear OAuth params
+                        if 'oauth_state' in st.session_state:
+                            del st.session_state['oauth_state']
                         st.rerun()  # Rerun untuk trigger redirect logic
                         return True
                     else:
@@ -978,6 +1000,8 @@ def handle_google_login_callback() -> bool:
                     st.session_state['google_auth_error'] = True
                     st.session_state['google_auth_email'] = user_email
                     st.query_params.clear()
+                    if 'oauth_state' in st.session_state:
+                        del st.session_state['oauth_state']
                     time.sleep(2.0)
                     callback_progress.empty()
                     return False
@@ -998,6 +1022,8 @@ def handle_google_login_callback() -> bool:
                 st.session_state['google_auth_error'] = True
                 st.session_state['google_auth_email'] = user_email
                 st.query_params.clear()
+                if 'oauth_state' in st.session_state:
+                    del st.session_state['oauth_state']
                 time.sleep(2.0)
                 callback_progress.empty()
                 return False
@@ -1526,22 +1552,17 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             </div>
         """, unsafe_allow_html=True)
 
-        # Tombol login Google
-        google_login_clicked = st.form_submit_button(
-            "Lanjutkan dengan Google", 
-            use_container_width=True, 
-            type="primary",
-            disabled=not app_ready
-        )
+    # Placeholder tombol Google diganti menjadi link button di luar form (user-initiated redirect aman di Cloud)
+    google_login_clicked = False
 
-        # Placeholder untuk pesan feedback dan progress di bawah tombol Google
-        # Gunakan single placeholder dengan containers untuk konsistensi layout
-        feedback_placeholder = st.empty()
-        
-        # Pre-allocate containers untuk mencegah layout shift
-        with feedback_placeholder.container():
-            progress_container = st.empty()
-            message_container = st.empty()
+    # Placeholder untuk pesan feedback dan progress di bawah tombol Google
+    # Gunakan single placeholder dengan containers untuk konsistensi layout
+    feedback_placeholder = st.empty()
+    
+    # Pre-allocate containers untuk mencegah layout shift
+    with feedback_placeholder.container():
+        progress_container = st.empty()
+        message_container = st.empty()
 
 
     # Tampilkan pesan error Google OAuth jika ada - menggunakan feedback placeholder
@@ -1634,40 +1655,38 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             show_warning_toast("Silakan isi kolom email dan kata sandi.")
 
 
-    # Handle tombol login Google di luar form
-    if google_login_clicked:
-        # Gunakan containers yang sudah di-allocate
-        progress_container.progress(0.3)
-        message_container.caption("🔗 Mengarahkan ke Google OAuth...")
-        
-        try:
-            google_url = get_google_authorization_url()
-            progress_container.progress(0.7)
-            message_container.caption("🌐 Mempersiapkan redirect ke Google...")
-            
-            # Show final loading state
-            progress_container.progress(1.0)
-            message_container.caption("✅ Mengarahkan ke halaman login Google...")
-            
-            # Log the redirect
-            log_event("auth", "Google OAuth redirect", "info", 
-                     details=f"Redirecting to Google OAuth: {google_url}")
-            show_success_toast("Mengarahkan ke Google login...")
-            
-            # Clear progress setelah menampilkan pesan sukses, seperti pada login email
-            time.sleep(SUCCESS_DISPLAY_DURATION)  # Beri waktu untuk menampilkan progress completion
-            progress_container.empty()
-            
-            # Redirect setelah progress dibersihkan
-            st.markdown(f"""
-                <meta http-equiv="refresh" content="0;url={google_url}">
-            """, unsafe_allow_html=True)
-            
-        except Exception as e:
-            log_event("auth", "Google OAuth redirect", "error", error=e)
-            progress_container.empty()
-            message_container.error("❌ Gagal mengarahkan ke Google. Silakan coba lagi.")
-            show_error_toast("Gagal mengarahkan ke Google login")
+        # Tampilkan tombol/link login Google di luar form agar bukan auto-redirect (menghindari X-Frame-Options)
+        if app_ready:
+                try:
+                        google_url = get_google_authorization_url()
+                        # Tampilkan tombol/link yang memaksa navigasi di top window (keluar dari iframe)
+                        st.markdown(
+                                f"""
+                                <div style=\"margin-top:0.25rem;\">
+                                    <a href=\"{google_url}\" target=\"_top\"> 
+                                        <button style=\"width:100%; border-radius:20px; height:2.8rem; font-weight:bold;\">
+                                            Lanjutkan dengan Google
+                                        </button>
+                                    </a>
+                                </div>
+                                <script>
+                                    // Fallback: jika anchor diblokir, paksa top-level redirect saat tombol diklik
+                                    const btn = document.currentScript.previousElementSibling.querySelector('button');
+                                    if (btn) {{
+                                        btn.addEventListener('click', function(e) {{
+                                            try {{ window.top.location.href = '{google_url}'; }} catch (err) {{ /* ignore */ }}
+                                        }});
+                                    }}
+                                </script>
+                                <div style=\"margin-top:0.25rem; font-size:0.85rem; color:#888;\">Jika tombol tidak bekerja, klik tautan berikut:
+                                    <a href=\"{google_url}\" target=\"_top\">🔗 Buka halaman login Google</a>
+                                </div>
+                                """,
+                                unsafe_allow_html=True
+                        )
+                except Exception as e:
+                        log_event("auth", "Render Google link", "error", error=e)
+                        st.warning("Tidak dapat membuat tautan Google OAuth. Periksa konfigurasi.")
     
     # Tampilkan tips untuk login
     display_auth_tips("login")
