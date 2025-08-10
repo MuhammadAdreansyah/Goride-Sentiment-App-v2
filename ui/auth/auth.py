@@ -16,6 +16,7 @@ Last Modified: 2025-07-06
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
 import re
 import asyncio
 import httpx
@@ -789,18 +790,70 @@ def verify_user_exists(user_email: str, firestore_client: Any) -> bool:
 # GOOGLE OAUTH FUNCTIONS
 # =============================================================================
 
-def get_google_authorization_url() -> str:
-    """Hasilkan URL otorisasi Google OAuth dengan cakupan yang diperlukan"""
+def get_google_authorization_url(popup: bool = False) -> str:
+    """Bangun URL otorisasi Google OAuth; gunakan state untuk menandai mode popup/normal"""
     base_url = 'https://accounts.google.com/o/oauth2/v2/auth'
+    # CSRF/state token
+    state_token = secrets.token_urlsafe(16)
+    st.session_state['oauth_state'] = state_token
+    state_value = ("popup|" if popup else "normal|") + state_token
+
     params = {
         'client_id': st.secrets.get("GOOGLE_CLIENT_ID", ""),
         'redirect_uri': get_redirect_uri(),
         'response_type': 'code',
         'scope': 'openid email profile',
         'access_type': 'offline',
-        'prompt': 'consent'
+        'prompt': 'consent',
+        'state': state_value,
     }
     return f"{base_url}?{urlencode(params)}"
+
+def _parse_oauth_state(state: str) -> Tuple[str, str]:
+    """Parse state menjadi (mode, token)."""
+    try:
+        if '|' in state:
+            mode, token = state.split('|', 1)
+            return mode, token
+        return 'normal', state
+    except Exception:
+        return 'normal', ''
+
+def render_oauth_popup_listener():
+    """Render JS listener untuk menerima kode dari popup via postMessage dan update URL utama."""
+    components.html(
+        """
+        <script>
+        (function(){
+            if (window.__oauthListenerInstalled) return; // avoid duplicates on rerun
+            window.__oauthListenerInstalled = true;
+            window.addEventListener('message', function(event){
+                try {
+                    // Hanya terima dari origin yang sama
+                    if (event.origin !== window.location.origin) return;
+                    var data = event.data || {};
+                    if (data.type !== 'oauth-code' || !data.code) return;
+                    // Ubah state 'popup|token' menjadi 'normal|token' agar diproses normal oleh server
+                    var state = data.state || '';
+                    if (typeof state === 'string' && state.indexOf('popup|') === 0) {
+                        state = 'normal|' + state.split('|')[1];
+                    }
+                    var url = new URL(window.location.href);
+                    url.searchParams.set('code', data.code);
+                    if (state) url.searchParams.set('state', state);
+                    // Pastikan tidak ada flag popup tersisa
+                    url.searchParams.delete('popup');
+                    // Redirect untuk memicu proses server-side
+                    window.location.href = url.toString();
+                } catch(e) {
+                    console.error('OAuth listener error:', e);
+                }
+            }, false);
+        })();
+        </script>
+        """,
+        height=0,
+    )
 
 async def exchange_google_token(code: str) -> Tuple[Optional[str], Optional[Dict]]:
     """Tukar kode otorisasi Google untuk informasi pengguna"""
@@ -851,7 +904,38 @@ def handle_google_login_callback() -> bool:
             st.error("Kode otorisasi Google tidak valid")
             return False
 
-        # Tampilkan progress untuk Google callback processing
+        # Deteksi mode popup dari parameter state
+        state = st.query_params.get('state', '')
+        mode, token = _parse_oauth_state(state) if state else ('normal', '')
+        # Validasi token state jika ada
+        expected = st.session_state.get('oauth_state')
+        if token and expected and token != expected:
+            st.error("State OAuth tidak valid. Silakan coba lagi.")
+            return False
+
+        # Jika mode popup: kirim code ke window utama dan tutup popup tanpa memproses di server sisi popup
+        if mode == 'popup':
+            log_event("auth", "Google login callback (popup)", "info", details="Posting code to opener and closing popup")
+            components.html(
+                """
+                <script>
+                    try {
+                        if (window.opener) {
+                            window.opener.postMessage({
+                                type: 'oauth-code',
+                                code: new URLSearchParams(window.location.search).get('code'),
+                                state: new URLSearchParams(window.location.search).get('state')
+                            }, window.location.origin);
+                        }
+                    } catch(e) { console.error('postMessage failed', e); }
+                    setTimeout(function(){ window.close(); }, 100);
+                </script>
+                """,
+                height=0
+            )
+            st.stop()
+
+        # Tampilkan progress untuk Google callback processing (mode normal)
         callback_progress = st.empty()
         callback_message = st.empty()
         
@@ -937,13 +1021,37 @@ def handle_google_login_callback() -> bool:
                         message_container.success("🎉 Login Google berhasil! Mengarahkan ke dashboard...")
                         show_success_toast("Login Google berhasil! Mengarahkan ke dashboard...")
                         
-                        # Auto-redirect ke halaman tools setelah login berhasil
-                        time.sleep(1.0)  # Beri waktu untuk membaca pesan
-                        callback_progress.empty()
-                        st.session_state['should_redirect'] = True
-                        st.session_state['login_success'] = True  # Flag untuk menampilkan toast di main app
-                        st.query_params.clear()  # Clear OAuth params
-                        st.rerun()  # Rerun untuk trigger redirect logic
+                        # Jika mode popup, jangan redirect di popup. Kirim code ke jendela utama dan biarkan popup close.
+                        if mode == 'popup':
+                            callback_progress.empty()
+                            # Render skrip untuk postMessage ke opener dan menutup popup
+                            components.html(
+                                """
+                                <script>
+                                    try {
+                                        if (window.opener) {
+                                            window.opener.postMessage({
+                                                type: 'oauth-code',
+                                                code: new URLSearchParams(window.location.search).get('code'),
+                                                state: new URLSearchParams(window.location.search).get('state')
+                                            }, window.location.origin);
+                                        }
+                                    } catch(e) { console.error('postMessage failed', e); }
+                                    setTimeout(function(){ window.close(); }, 100);
+                                </script>
+                                """,
+                                height=0
+                            )
+                            # Berhentikan eksekusi agar popup tidak render form lagi
+                            st.stop()
+                        else:
+                            # Auto-redirect ke halaman tools setelah login berhasil (mode normal)
+                            time.sleep(1.0)  # Beri waktu untuk membaca pesan
+                            callback_progress.empty()
+                            st.session_state['should_redirect'] = True
+                            st.session_state['login_success'] = True  # Flag untuk menampilkan toast di main app
+                            st.query_params.clear()  # Clear OAuth params
+                            st.rerun()  # Rerun untuk trigger redirect logic
                         return True
                     else:
                         # Email belum diverifikasi untuk user non-Google
@@ -1535,17 +1643,29 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             progress_container = st.empty()
             message_container = st.empty()
 
-    # Tautan Login Google (di luar form untuk menghindari submit/refresh)
-    google_url = get_google_authorization_url()
-    try:
-        st.link_button(
-            "Lanjutkan dengan Google",
-            google_url,
-            use_container_width=True
-        )
-    except TypeError:
-        # Fallback jika parameter tidak didukung oleh versi streamlit
-        st.link_button("Lanjutkan dengan Google", google_url)
+    # Tombol Login Google via Popup (di luar form)
+    render_oauth_popup_listener()  # pasang listener postMessage sekali
+    google_popup_url = get_google_authorization_url(popup=True)
+    _popup_html = """
+        <div style='width:100%'>
+            <button id="google-login-popup" style="width:100%;border:none;border-radius:20px;height:44px;font-weight:700;background:#0d6efd;color:white;cursor:pointer">Lanjutkan dengan Google</button>
+        </div>
+        <script>
+            (function(){
+                var btn = document.getElementById('google-login-popup');
+                if (btn && !btn.__bound) {
+                    btn.__bound = true;
+                    btn.addEventListener('click', function(){
+                        var w = 520, h = 600;
+                        var y = window.top.outerHeight / 2 + window.top.screenY - ( h / 2);
+                        var x = window.top.outerWidth / 2 + window.top.screenX - ( w / 2);
+                        window.open('__OAUTH_URL__', 'oauth_popup', 'popup=yes,toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes,width='+w+',height='+h+',top='+y+',left='+x);
+                    });
+                }
+            })();
+        </script>
+    """.replace("__OAUTH_URL__", google_popup_url)
+    components.html(_popup_html, height=60)
 
 
     # Tampilkan pesan error Google OAuth jika ada - menggunakan feedback placeholder
