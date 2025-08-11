@@ -677,7 +677,7 @@ def render_data_exploration_section(topic_data: pd.DataFrame):
     
     # Add enhancements
     if show_row_numbers:
-        display_data['No.'] = range(start_idx + 1, start_idx + len(display_data) + 1)
+        display_data['No.'] = range(1, len(display_data) + 1)
     
     if show_word_count:
         display_data['Jumlah Kata'] = display_data['review_text'].str.split().str.len()
@@ -756,6 +756,7 @@ def render_data_exploration_section(topic_data: pd.DataFrame):
         use_container_width=True,
         height=min(600, max(300, len(final_display) * 35 + 100)),
         column_config=col_cfg or None,
+        hide_index=True,
     )
     
     # Navigation controls
