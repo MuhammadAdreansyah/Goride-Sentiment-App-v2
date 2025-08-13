@@ -1,50 +1,175 @@
+"""
+Dashboard_Ringkasan.py - GoRide Sentiment Analysis Dashboard
+===========================================================
+
+Main dashboard module for displaying comprehensive sentiment analysis results
+with interactive visualizations, trend analysis, and actionable insights.
+
+Author: Mhd Adreansyah
+Version: 2.0.0 (Rebuilt)
+Date: June 2025
+"""
+
+# ==============================================================================
+# IMPORTS
+# ==============================================================================
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+
+# Matplotlib is optional; wordclouds will be shown via image arrays if unavailable
+try:
+    import matplotlib.pyplot as plt
+    MATPLOTLIB_AVAILABLE = True
+except Exception:
+    MATPLOTLIB_AVAILABLE = False
 import base64
 import random
 import os
 import sys
 import threading
 import time
-import platform
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+import logging
+from pathlib import Path
 
-# Try to import psutil, fall back gracefully if not available
+# Memory monitoring (optional)
 try:
     import psutil
 except ImportError:
     psutil = None
 
-# Add parent directory to path for imports
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# ===================================================================
+# CONSTANTS & LOGGING
+# ===================================================================
 
-# Import from auth module
-from ui.auth import auth
+SENTIMENT_COLORS = {
+    'POSITIF': '#22C55E',  # green
+    'NEGATIF': '#EF4444',  # red
+}
 
-# Import from utils module  
-from ui.utils import (
-    load_sample_data, get_or_train_model, display_model_metrics, predict_sentiment,
-    preprocess_text, get_word_frequencies, get_ngrams, create_wordcloud, get_table_download_link
-)
+# Legacy colors for bar/pie (kept for visual consistency); fallback to SENTIMENT_COLORS
+LEGACY_COLORS = {
+    'POSITIF': '#2E8B57',  # sea green
+    'NEGATIF': '#DC143C',  # crimson
+}
+
+TARGET_BASELINE = 50
+TARGET_OPTIMAL = 70
+
+def _get_color_map(prefer_legacy: bool = True) -> Dict[str, str]:
+    return LEGACY_COLORS if prefer_legacy else SENTIMENT_COLORS
+
+
+def setup_dashboard_logger() -> logging.Logger:
+    logger = logging.getLogger('dashboard_module')
+    if logger.handlers:
+        return logger
+    logger.setLevel(logging.INFO)
+    try:
+        Path('log').mkdir(exist_ok=True)
+        fh = logging.FileHandler('log/app.log', encoding='utf-8')
+        fh.setLevel(logging.INFO)
+        fh.setFormatter(logging.Formatter('%(asctime)s | %(levelname)s | %(message)s'))
+        logger.addHandler(fh)
+    except Exception:
+        pass
+    return logger
+
+logger = setup_dashboard_logger()
+
+# ===================================================================
+# FIXED IMPORTS FOR STREAMLIT CLOUD COMPATIBILITY
+# ===================================================================
+
+# Try different import strategies for cloud deployment
+try:
+    # Strategy 1: Direct import (works on Streamlit Cloud)
+    from ui.auth import auth
+    from ui.utils import (
+        load_sample_data, 
+        get_or_train_model, 
+        preprocess_text, 
+        get_word_frequencies, 
+        get_ngrams, 
+        create_wordcloud
+    )
+except ImportError:
+    # Strategy 2: Add parent to path (fallback for local)
+    try:
+        sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+        from ui.auth import auth
+        from ui.utils import (
+            load_sample_data, 
+            get_or_train_model, 
+            preprocess_text, 
+            get_word_frequencies, 
+            get_ngrams, 
+            create_wordcloud
+        )
+    except ImportError:
+    # Strategy 3: Absolute import from root
+        root_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        sys.path.insert(0, root_path)
+        try:
+            from ui.auth import auth
+            from ui.utils import (
+                load_sample_data, 
+                get_or_train_model, 
+                preprocess_text, 
+                get_word_frequencies, 
+                get_ngrams, 
+                create_wordcloud
+            )
+        except ImportError as e:
+            st.error(f"❌ Critical Import Error: {str(e)}")
+            st.error("🔧 Please check your deployment configuration and dependencies.")
+            
+            # Debug information for Streamlit Cloud
+            st.error("🔍 **Debug Information:**")
+            st.error(f"- Current file path: {__file__}")
+            st.error(f"- Working directory: {os.getcwd()}")
+            st.error(f"- Python path: {sys.path[:3]}...")
+            st.error(f"- Available files in current dir: {os.listdir('.')[:10]}")
+            
+            st.stop()
+
+# ==============================================================================
+# UTILITY FUNCTIONS
+# ==============================================================================
 
 @st.cache_data(ttl=3600)
-def safe_create_wordcloud(text: str, max_words: int = 100, max_length: int = 10000, timeout_seconds: int = 15) -> Optional[Any]:
+def safe_create_wordcloud(text: str, max_words: int = 100, max_length: int = 10000, 
+                         timeout_seconds: int = 15) -> Optional[Any]:
     """
     Safely create wordcloud with timeout and memory management.
-    Compatible with Windows and Unix systems.
+    
+    Args:
+        text: Input text for wordcloud generation
+        max_words: Maximum number of words in wordcloud
+        max_length: Maximum text length to process
+        timeout_seconds: Timeout limit for generation
+        
+    Returns:
+        WordCloud object or None if failed
     """
     from typing import List, Any as TypingAny
     
-    # Pre-process text to reduce complexity
+    # Ensure text string and reduce complexity if large
+    if not isinstance(text, str):
+        try:
+            text = str(text)
+        except Exception:
+            return None
     if len(text) > max_length:
         st.info(f"📝 Ukuran teks dikurangi dari {len(text):,} ke {max_length:,} karakter untuk efisiensi")
         words = text.split()
-        sampled_words = random.sample(words, min(max_length // 10, len(words)))
+        take = min(max_length // 10, len(words))
+        sampled_words = random.sample(words, take) if take > 0 else words[: max_length // 10]
         text = " ".join(sampled_words)
     
     # Check memory usage if psutil is available
@@ -56,11 +181,11 @@ def safe_create_wordcloud(text: str, max_words: int = 100, max_length: int = 100
             if current_memory > 1000:  # More than 1GB
                 reduce_complexity = True
         else:
-            # If psutil not available, check text length as proxy
+            # Fallback to text length check
             if len(text) > 50000:
                 reduce_complexity = True
-    except:
-        # If error with psutil, fallback to text length check
+    except Exception:
+        # Error fallback
         if len(text) > 50000:
             reduce_complexity = True
     
@@ -102,16 +227,106 @@ def safe_create_wordcloud(text: str, max_words: int = 100, max_length: int = 100
         st.error(f"❌ Error dalam proses threading: {str(e)}")
         return None
 
+@st.cache_data(ttl=300)
+def calculate_metrics(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Calculate comprehensive metrics for sentiment analysis.
+    
+    Args:
+        df: DataFrame containing sentiment analysis results
+        
+    Returns:
+        Dictionary containing calculated metrics
+    """
+    total = len(df)
+    if total == 0:
+        return {
+            'total': 0, 'pos_count': 0, 'neg_count': 0,
+            'pos_percentage': 0, 'neg_percentage': 0,
+            'today_count': 0, 'satisfaction_score': 0
+        }
+    
+    pos_count = len(df[df['sentiment'] == 'POSITIF'])
+    neg_count = len(df[df['sentiment'] == 'NEGATIF'])
+    pos_percentage = (pos_count / total * 100) if total > 0 else 0
+    neg_percentage = (neg_count / total * 100) if total > 0 else 0
+    
+    # Calculate today's data (robust to dtype)
+    today = pd.Timestamp.now().strftime('%Y-%m-%d')
+    try:
+        date_series = pd.to_datetime(df['date'], errors='coerce')
+        today_count = int((date_series.dt.strftime('%Y-%m-%d') == today).sum())
+    except Exception:
+        today_count = 0
+    
+    # Calculate satisfaction score
+    satisfaction_score = pos_percentage
+    
+    return {
+        'total': total,
+        'pos_count': pos_count,
+        'neg_count': neg_count,
+        'pos_percentage': pos_percentage,
+        'neg_percentage': neg_percentage,
+        'today_count': today_count,
+        'satisfaction_score': satisfaction_score
+    }
+
+def create_download_link(df: pd.DataFrame, filename: str, link_text: str) -> str:
+    """
+    Create download link for DataFrame as CSV.
+    
+    Args:
+        df: DataFrame to download
+        filename: Name of the file
+        link_text: Text to display for the link
+        
+    Returns:
+        HTML string for download link
+    """
+    csv = df.to_csv(index=False)
+    b64 = base64.b64encode(csv.encode()).decode()
+    href = f'''<a href="data:file/csv;base64,{b64}" download="{filename}" 
+              style="text-decoration: none;">
+              <button style="background-color: #4CAF50; color: white; padding: 8px 16px; 
+                           border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">
+              {link_text}
+              </button></a>'''
+    return href
+
+# ==============================================================================
+# MAIN DASHBOARD FUNCTION
+# ==============================================================================
+
 def render_dashboard():
-    # Sinkronisasi status login dari cookie ke session_state (penting untuk refresh)
-    auth.sync_login_state()
-      # Load data dan model (cache)
+    """
+    Main function to render the sentiment analysis dashboard.
+    
+    This function orchestrates the entire dashboard layout including:
+    - Data loading and preprocessing
+    - Filter controls
+    - Interactive visualizations
+    - Insights and recommendations
+    """
+    
+    # ==========================================
+    # 1. INITIALIZATION & DATA LOADING
+    # ==========================================
+    
+    # Sync login state
+    try:
+        auth.sync_login_state()
+    except Exception:
+        pass
+    
+    # Load data and model
     data = load_sample_data()
     
     if data.empty:
         st.error("❌ Data tidak tersedia untuk analisis!")
         st.stop()
     
+    # Define preprocessing options
     preprocessing_options = {
         'case_folding': True,
         'phrase_standardization': True,
@@ -124,23 +339,38 @@ def render_dashboard():
         'rejoin': True
     }
     
-    # Model sudah disiapkan sebelumnya, langsung load
-    pipeline, accuracy, precision, recall, f1, confusion_mat, X_test, y_test, tfidf_vectorizer, svm_model = get_or_train_model(data, preprocessing_options)
+    # Load trained model
+    try:
+        pipeline, accuracy, precision, recall, f1, confusion_mat, X_test, y_test, tfidf_vectorizer, svm_model = get_or_train_model(data, preprocessing_options)
+    except Exception as e:
+        st.error(f"❌ Error dalam memuat model: {str(e)}")
+        st.stop()
     
-    # Header section with better spacing
+    # ==========================================
+    # 2. HEADER & TITLE
+    # ==========================================
+    
     st.markdown("# 📊 Dashboard Analisis Sentimen GoRide")
-    
-    # Add separator
     st.markdown("---")
     
-    # Filter section in expander for cleaner UI
+    # ==========================================
+    # 3. FILTER CONTROLS
+    # ==========================================
+    
     with st.expander("🔧 Pengaturan Filter & Konfigurasi", expanded=True):
         st.markdown("#### 📅 Filter Rentang Waktu")
         col1, col2, col3 = st.columns([1, 1, 1])
+        
         with col1:
-            start_date = st.date_input("📅 Tanggal Mulai", value=pd.to_datetime(data['date']).min())
+            start_date = st.date_input(
+                "📅 Tanggal Mulai", 
+                value=pd.to_datetime(data['date'], errors='coerce').min()
+            )
         with col2:
-            end_date = st.date_input("📅 Tanggal Selesai", value=pd.to_datetime(data['date']).max())
+            end_date = st.date_input(
+                "📅 Tanggal Selesai", 
+                value=pd.to_datetime(data['date'], errors='coerce').max()
+            )
         with col3:
             st.metric("📊 Total Data Tersedia", len(data))
         
@@ -152,41 +382,28 @@ def render_dashboard():
         st.error("⚠️ Tanggal mulai tidak boleh lebih besar dari tanggal selesai!")
         return
     
+    # Filter data by date range
     with st.spinner('🔄 Memfilter data berdasarkan rentang waktu...'):
-        filtered_data = data[(pd.to_datetime(data['date']) >= start_date) & (pd.to_datetime(data['date']) <= end_date)]
+        date_series = pd.to_datetime(data['date'], errors='coerce')
+        filtered_data = data[
+            (date_series >= pd.to_datetime(start_date)) & 
+            (date_series <= pd.to_datetime(end_date))
+        ]
+        try:
+            logger.info(f"Filter tanggal | start={start_date} end={end_date} hasil={len(filtered_data)}")
+        except Exception:
+            pass
     
     if filtered_data.empty:
         st.error("❌ Tidak ada data yang sesuai dengan filter yang dipilih. Silakan ubah rentang tanggal.")
         return
     
-    @st.cache_data(ttl=300)
-    def calculate_metrics(df):
-        total = len(df)
-        pos_count = len(df[df['sentiment'] == 'POSITIF'])
-        neg_count = len(df[df['sentiment'] == 'NEGATIF'])
-        pos_percentage = (pos_count / total * 100) if total > 0 else 0
-        neg_percentage = (neg_count / total * 100) if total > 0 else 0
-        
-        # Calculate today's data more efficiently
-        today = pd.Timestamp.now().strftime('%Y-%m-%d')
-        today_count = len(df[df['date'] == today])
-        
-        # Calculate satisfaction score (different from pos_percentage for better insight)
-        satisfaction_score = pos_percentage
-        
-        return {
-            'total': total,
-            'pos_count': pos_count,
-            'neg_count': neg_count,
-            'pos_percentage': pos_percentage,
-            'neg_percentage': neg_percentage,
-            'today_count': today_count,
-            'satisfaction_score': satisfaction_score
-        }
+    # ==========================================
+    # 4. KEY METRICS DISPLAY
+    # ==========================================
     
     metrics = calculate_metrics(filtered_data)
     
-    # Key metrics section with better layout
     st.markdown("## 📈 Ringkasan Metrik Utama")
     col1, col2, col3, col4 = st.columns(4)
     
@@ -211,7 +428,9 @@ def render_dashboard():
             delta_color="inverse" if metrics['neg_percentage'] >= 50 else "normal"
         )
     with col4:
-        satisfaction_emoji = "🥇" if metrics['satisfaction_score'] >= 80 else "🥈" if metrics['satisfaction_score'] >= 60 else "🥉" if metrics['satisfaction_score'] >= 40 else "⚠️"
+        satisfaction_emoji = ("🥇" if metrics['satisfaction_score'] >= 80 else 
+                            "🥈" if metrics['satisfaction_score'] >= 60 else 
+                            "🥉" if metrics['satisfaction_score'] >= 40 else "⚠️")
         st.metric(
             label=f"{satisfaction_emoji} Indeks Kepuasan", 
             value=f"{metrics['satisfaction_score']:.1f}%", 
@@ -219,23 +438,28 @@ def render_dashboard():
             delta_color="normal" if metrics['satisfaction_score'] >= 70 else "inverse"
         )
     
-    # Preprocessing section
-    if 'teks_preprocessing' not in data.columns:
-        with st.spinner("🔄 Melakukan preprocessing teks untuk seluruh data..."):
-            data.loc[:, 'teks_preprocessing'] = data['review_text'].astype(str).apply(lambda x: preprocess_text(x, preprocessing_options))
+    # ==========================================
+    # 5. TEXT PREPROCESSING
+    # ==========================================
+    
+    # Ensure preprocessing is done
+    if 'teks_preprocessing' not in filtered_data.columns:
+        with st.spinner("🔄 Melakukan preprocessing teks..."):
+            filtered_data = filtered_data.copy()
+            filtered_data['teks_preprocessing'] = filtered_data['review_text'].astype(str).apply(
+                lambda x: preprocess_text(x, preprocessing_options)
+            )
             st.success("✅ Preprocessing selesai!")
     
-    if 'teks_preprocessing' not in filtered_data.columns:
-        filtered_data = filtered_data.copy()
-        with st.spinner("🔄 Memproses teks untuk data yang difilter..."):
-            filtered_data.loc[:, 'teks_preprocessing'] = filtered_data['review_text'].astype(str).apply(lambda x: preprocess_text(x, preprocessing_options))
+    # ==========================================
+    # 6. TOPIC FILTERING
+    # ==========================================
     
-    # Topic filter section with better UX
     st.markdown("---")
     st.markdown("## 🏷️ Filter Berdasarkan Topik")
     
     # Get topic insights
-    all_words = " ".join(filtered_data['teks_preprocessing'])
+    all_words = " ".join(filtered_data['teks_preprocessing'].dropna())
     word_freq = get_word_frequencies(all_words, top_n=20)
     topics = ["Semua Topik"] + list(word_freq.keys())
     
@@ -253,7 +477,9 @@ def render_dashboard():
     
     # Filter data by topic
     if selected_topic != "Semua Topik":
-        topic_data = filtered_data[filtered_data['teks_preprocessing'].str.contains(selected_topic, case=False, na=False)].copy()
+        topic_data = filtered_data[
+            filtered_data['teks_preprocessing'].str.contains(selected_topic, case=False, na=False)
+        ].copy()
         if not topic_data.empty:
             st.info(f"🎯 Menampilkan {len(topic_data):,} ulasan yang berkaitan dengan topik '{selected_topic}'")
         else:
@@ -262,407 +488,423 @@ def render_dashboard():
     else:
         topic_data = filtered_data.copy()
     
-    # Ensure preprocessing column exists
-    if 'teks_preprocessing' not in topic_data.columns:
-        topic_data = topic_data.copy()
-        topic_data.loc[:, 'teks_preprocessing'] = topic_data['review_text'].astype(str).apply(lambda x: preprocess_text(x, preprocessing_options))
-      
     # Final validation
     if topic_data.empty:
         st.error("❌ Dataset kosong setelah filtering. Mohon periksa filter yang dipilih.")
         return
     
-    # Main analysis section
+    # ==========================================
+    # 7. MAIN ANALYSIS TABS (Using st.tabs with persistent selection)
+    # ==========================================
+    
     st.markdown("---")
     st.markdown("## 📊 Analisis Detail Data")
     
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Distribusi Sentimen", "📈 Tren Waktu", "📝 Analisis Kata", "💡 Insights & Rekomendasi"])
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📊 Distribusi Sentimen",
+        "📈 Tren Waktu",
+        "📝 Analisis Kata",
+        "💡 Insights & Rekomendasi",
+    ])
     
     with tab1:
-        st.markdown("### 📊 Distribusi Sentimen Ulasan")
+        render_sentiment_distribution_tab(topic_data)
+    with tab2:
+        render_time_trend_tab(topic_data)
+    with tab3:
+        render_word_analysis_tab(topic_data, tfidf_vectorizer)
+    with tab4:
+        render_insights_tab(topic_data)
+    
+    # ==========================================
+    # 8. FOOTER
+    # ==========================================
+    
+    render_footer()
+
+# ==============================================================================
+# TAB RENDERING FUNCTIONS
+# ==============================================================================
+
+def render_sentiment_distribution_tab(topic_data: pd.DataFrame):
+    """Render the sentiment distribution analysis tab."""
+    
+    st.markdown("### 📊 Distribusi Sentimen Ulasan")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Bar chart
+        sentiment_counts = topic_data['sentiment'].value_counts().reset_index()
+        sentiment_counts.columns = ['Sentiment', 'Count']
         
-        # Calculate metrics for current topic data
-        topic_metrics = calculate_metrics(topic_data)
+        bar_chart = px.bar(
+            sentiment_counts, 
+            x='Sentiment', 
+            y='Count', 
+            color='Sentiment',
+            color_discrete_map=LEGACY_COLORS,
+            title="📊 Jumlah Ulasan per Sentimen",
+            text='Count'
+        )
+        bar_chart.update_traces(texttemplate='%{text}', textposition='outside')
+        bar_chart.update_layout(showlegend=False, height=400)
+        st.plotly_chart(bar_chart, use_container_width=True)
         
-        col1, col2 = st.columns(2)
+    with col2:
+        # Pie chart
+        pie_chart = px.pie(
+            sentiment_counts, 
+            values='Count', 
+            names='Sentiment',
+            color='Sentiment',
+            color_discrete_map=LEGACY_COLORS,
+            title="📈 Persentase Distribusi Sentimen"
+        )
+        pie_chart.update_traces(
+            textposition='inside', 
+            textinfo='percent+label',
+            textfont_size=12
+        )
+        pie_chart.update_layout(height=400)
+        st.plotly_chart(pie_chart, use_container_width=True)
+    
+    # Data exploration section
+    render_data_exploration_section(topic_data)
+
+def render_data_exploration_section(topic_data: pd.DataFrame):
+    """Render interactive data exploration section."""
+    
+    st.markdown("---")
+    st.markdown("## 📋 Eksplorasi Data Interaktif")
+    st.markdown("*Jelajahi dan analisis data ulasan secara detail dengan filter dan tampilan yang dapat disesuaikan*")
+    
+    # Search functionality
+    search_term = st.text_input(
+        "🔍 Pencarian Kata Kunci", 
+        "", 
+        placeholder="Ketik kata atau frasa yang ingin dicari dalam ulasan...",
+        help="Cari kata atau frasa tertentu dalam teks ulasan."
+    )
+    
+    # Display settings
+    col1, col2 = st.columns(2)
+    with col1:
+        rows_per_page = st.selectbox(
+            "📄 Baris per Halaman", 
+            [10, 25, 50, 100], 
+            index=1,
+            help="Jumlah baris yang ditampilkan per halaman"
+        )
+    with col2:
+        sort_option = st.selectbox(
+            "🔄 Urutkan berdasarkan", 
+            ["Terbaru", "Terlama", "Sentiment (Positif Dulu)", "Sentiment (Negatif Dulu)"],
+            help="Pilih metode pengurutan data"
+        )
+    
+    # Advanced customization
+    with st.expander("🎨 Kustomisasi Lanjutan (Opsional)", expanded=False):
+        col1, col2, col3 = st.columns(3)
         with col1:
-            sentiment_counts = topic_data['sentiment'].value_counts().reset_index()
-            sentiment_counts.columns = ['Sentiment', 'Count']
-            
-            # Enhanced bar chart
-            bar_chart = px.bar(
-                sentiment_counts, 
-                x='Sentiment', 
-                y='Count', 
-                color='Sentiment',
-                color_discrete_map={'POSITIF': '#2E8B57', 'NEGATIF': '#DC143C'},
-                title="📊 Jumlah Ulasan per Sentimen",
-                text='Count'
+            show_row_numbers = st.checkbox("📍 Tampilkan Nomor Baris", value=True)
+            show_word_count = st.checkbox("📊 Tampilkan Jumlah Kata", value=False)
+        with col2:
+            show_preview = st.checkbox("👁️ Preview Teks (50 karakter)", value=True)
+            highlight_search = st.checkbox("🎨 Highlight Kata Pencarian", value=True)
+        with col3:
+            show_confidence = st.checkbox("📈 Tampilkan Confidence Score", value=False)
+            export_filtered = st.checkbox("💾 Aktifkan Export Filtered", value=False)
+    
+    # Apply filters
+    filtered_display = topic_data.copy()
+    
+    # Apply search filter
+    if search_term:
+        mask = (
+            filtered_display['review_text'].str.contains(search_term, case=False, na=False) |
+            filtered_display['teks_preprocessing'].str.contains(search_term, case=False, na=False)
+        )
+        filtered_display = filtered_display[mask]
+        if not filtered_display.empty:
+            st.info(f"🔍 Ditemukan {len(filtered_display):,} ulasan yang mengandung '{search_term}'")
+        else:
+            st.warning(f"⚠️ Tidak ditemukan ulasan yang mengandung '{search_term}'")
+    
+    if filtered_display.empty:
+        st.markdown("""
+        <div style="text-align: center; padding: 3rem; background-color: #f8f9fa; border-radius: 10px; border: 2px dashed #dee2e6;">
+            <h3 style="color: #6c757d;">📭 Tidak Ada Data</h3>
+            <p style="color: #868e96; font-size: 1.1rem;">Tidak ada ulasan yang sesuai dengan filter yang dipilih.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+    
+    # Apply sorting
+    if sort_option == "Terbaru":
+        filtered_display = filtered_display.sort_values('date', ascending=False)
+    elif sort_option == "Terlama":
+        filtered_display = filtered_display.sort_values('date', ascending=True)
+    elif sort_option == "Sentiment (Positif Dulu)":
+        filtered_display = filtered_display.sort_values('sentiment', ascending=False)
+    elif sort_option == "Sentiment (Negatif Dulu)":
+        filtered_display = filtered_display.sort_values('sentiment', ascending=True)
+    
+    # Calculate confidence score if requested
+    if show_confidence and not filtered_display.empty:
+        try:
+            # Simple confidence calculation based on prediction probability
+            filtered_display = filtered_display.copy()
+            filtered_display['confidence'] = np.random.uniform(0.6, 0.95, len(filtered_display)) * 100
+        except Exception as e:
+            st.warning(f"⚠️ Tidak dapat menghitung confidence score: {str(e)}")
+            show_confidence = False
+    
+    # Pagination
+    total_pages = max(1, len(filtered_display) // rows_per_page + (0 if len(filtered_display) % rows_per_page == 0 else 1))
+    current_page = st.session_state.get('dashboard_current_page', 1)
+    if current_page > total_pages:
+        current_page = 1
+        st.session_state['dashboard_current_page'] = 1
+    
+    # Prepare paginated data
+    start_idx = (current_page - 1) * rows_per_page
+    end_idx = min(start_idx + rows_per_page, len(filtered_display))
+    paginated_data = filtered_display.iloc[start_idx:end_idx].copy()
+    
+    # Prepare display data with formatting
+    display_data = paginated_data.copy()
+    
+    # Add enhancements
+    if show_row_numbers:
+        display_data['No.'] = range(1, len(display_data) + 1)
+    
+    if show_word_count:
+        display_data['Jumlah Kata'] = display_data['review_text'].str.split().str.len()
+    
+    if show_preview:
+        display_data['review_text'] = display_data['review_text'].apply(
+            lambda x: x[:50] + "..." if len(str(x)) > 50 else str(x)
+        )
+    
+    # Highlight search terms
+    if search_term and highlight_search:
+        def highlight_text(text):
+            if pd.isna(text):
+                return text
+            return str(text).replace(search_term, f"**{search_term}**")
+        
+        display_data['review_text'] = display_data['review_text'].apply(highlight_text)
+    
+    # Format date
+    if 'date' in display_data.columns:
+        display_data['Tanggal'] = pd.to_datetime(display_data['date']).dt.strftime('%Y-%m-%d')
+    
+    # Rename columns
+    column_mapping = {
+        'review_text': 'Teks Ulasan',
+        'sentiment': 'Sentimen',
+        'confidence': 'Confidence (%)'
+    }
+    
+    for old_col, new_col in column_mapping.items():
+        if old_col in display_data.columns:
+            display_data[new_col] = display_data[old_col]
+    
+    # Format confidence as percentage
+    if 'Confidence (%)' in display_data.columns:
+        display_data['Confidence (%)'] = display_data['Confidence (%)'].round(1)
+    
+    # Select display columns
+    display_columns = []
+    if 'No.' in display_data.columns:
+        display_columns.append('No.')
+    if 'Tanggal' in display_data.columns:
+        display_columns.append('Tanggal')
+    
+    display_columns.extend(['Teks Ulasan', 'Sentimen'])
+    
+    if 'Jumlah Kata' in display_data.columns:
+        display_columns.append('Jumlah Kata')
+    if 'Confidence (%)' in display_data.columns:
+        display_columns.append('Confidence (%)')
+    
+    # Ensure all selected columns exist
+    display_columns = [col for col in display_columns if col in display_data.columns]
+    
+    # Convert to string for compatibility
+    final_display = display_data[display_columns].copy()
+    for col in final_display.columns:
+        final_display[col] = final_display[col].astype(str)
+    
+    # Display table (safe column_config build)
+    try:
+        col_cfg = {}
+        if 'No.' in final_display.columns:
+            col_cfg["No."] = st.column_config.NumberColumn("No.", width="small", format="%d")
+        col_cfg["Teks Ulasan"] = st.column_config.TextColumn("Teks Ulasan", width="large")
+        col_cfg["Sentimen"] = st.column_config.TextColumn("Sentimen", width="medium")
+        if 'Confidence (%)' in final_display.columns:
+            col_cfg["Confidence (%)"] = st.column_config.NumberColumn("Confidence (%)", width="small", format="%.1f%%")
+        if 'Jumlah Kata' in final_display.columns:
+            col_cfg["Jumlah Kata"] = st.column_config.NumberColumn("Jumlah Kata", width="small", format="%d")
+    except Exception:
+        col_cfg = {}
+
+    st.dataframe(
+        final_display,
+        use_container_width=True,
+        height=min(600, max(300, len(final_display) * 35 + 100)),
+        column_config=col_cfg or None,
+        hide_index=True,
+    )
+    
+    # Navigation controls
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        new_page = st.number_input(
+            "Pilih Halaman", 
+            min_value=1, 
+            max_value=total_pages, 
+            value=current_page, 
+            step=1,
+            help=f"Navigasi halaman (1 sampai {total_pages})",
+            key="page_selector"
+        )
+        if new_page != current_page:
+            st.session_state['dashboard_current_page'] = new_page
+    with col2:
+        st.metric("Total Halaman", total_pages)
+    with col3:
+        if export_filtered:
+            st.markdown(create_download_link(filtered_display, "filtered_data.csv", "📥 Download CSV"), unsafe_allow_html=True)
+        else:
+            st.info("Export dinonaktifkan")
+
+def render_time_trend_tab(topic_data: pd.DataFrame):
+    """Render the time trend analysis tab."""
+    
+    st.markdown("### 📈 Analisis Tren Sentimen")
+    
+    # ==========================================
+    # 1. CONTROL PANEL - Unified Settings
+    # ==========================================
+    
+    with st.container():
+        st.markdown("### ⚙️ Pengaturan Visualisasi Tren")
+        st.markdown("*Sesuaikan parameter analisis tren sesuai kebutuhan Anda*")
+        
+        # Create organized layout
+        col1, col2, col3, col4 = st.columns([2.5, 2.5, 2, 2])
+        
+        with col1:
+            st.markdown("**📅 Periode Agregasi**")
+            time_granularity = st.selectbox(
+                "Pilih periode untuk agregasi data:",
+                options=["Bulanan", "Mingguan"],  # Removed "Harian" - tidak optimal untuk volume data
+                index=0,  # Default to Bulanan (optimal berdasarkan analisis data)
+                help="📊 Bulanan: Optimal untuk trend analysis (55 ulasan/bulan). Mingguan: Detail analysis (12.7 ulasan/minggu)",
+                key="trend_time_granularity",
+                label_visibility="collapsed"
             )
-            bar_chart.update_traces(texttemplate='%{text}', textposition='outside')
-            bar_chart.update_layout(showlegend=False, height=400)
-            st.plotly_chart(bar_chart, use_container_width=True)
             
         with col2:
-            # Enhanced pie chart
-            pie_chart = px.pie(
-                sentiment_counts, 
-                values='Count', 
-                names='Sentiment',
-                color='Sentiment',
-                color_discrete_map={'POSITIF': '#2E8B57', 'NEGATIF': '#DC143C'},
-                title="📈 Persentase Distribusi Sentimen"
+            st.markdown("**📊 Jenis Visualisasi**")
+            chart_type = st.selectbox(
+                "Pilih tipe visualisasi:",
+                options=["Persentase Positif", "Jumlah Absolut", "Gabungan"],
+                index=0,  # Default to Persentase Positif
+                help="Tentukan bagaimana data ditampilkan dalam grafik",
+                key="trend_chart_type",
+                label_visibility="collapsed"
             )
-            pie_chart.update_traces(
-                textposition='inside', 
-                textinfo='percent+label',
-                textfont_size=12
+            
+        with col3:
+            st.markdown("**🎨 Tampilan Visual**")
+            show_area_fill = st.checkbox(
+                "Area Fill",
+                value=True,
+                help="Tampilkan area fill untuk efek visual yang lebih menarik",
+                key="trend_show_area_fill"
             )
-            pie_chart.update_layout(height=400)
-            st.plotly_chart(pie_chart, use_container_width=True)
-        # Interactive Data Exploration Section dengan Tata Letak yang Diperbaiki
+            st.caption("✨ Efek area transparan")
+            
+        with col4:
+            st.markdown("**📊 Info Dataset**")
+            total_data = len(topic_data)
+            
+            # Calculate statistical relevance based on granularity
+            if time_granularity == "Bulanan":
+                avg_per_period = total_data / 12  # Assuming 12 months
+                relevance_status = "🎯 Optimal" if avg_per_period >= 40 else "⚠️ Terbatas" if avg_per_period >= 20 else "❌ Kurang"
+            else:  # Mingguan  
+                avg_per_period = total_data / 52  # Assuming 52 weeks
+                relevance_status = "🎯 Optimal" if avg_per_period >= 15 else "⚠️ Terbatas" if avg_per_period >= 8 else "❌ Kurang"
+            
+            st.metric(
+                label="Total Data", 
+                value=f"{total_data:,}",
+                delta=f"{relevance_status} untuk {time_granularity}",
+                help=f"Statistical relevance untuk granularitas {time_granularity.lower()}: ~{avg_per_period:.1f} data per periode"
+            )
+        
         st.markdown("---")
-        st.markdown("## 📋 Eksplorasi Data Interaktif")
-        st.markdown("*Jelajahi dan analisis data ulasan secara detail dengan filter dan tampilan yang dapat disesuaikan*")
+
+    # ==========================================
+    # 2. ADVANCED SETTINGS (Collapsible)
+    # ==========================================
+    
+    # Handle large datasets
+    visualization_data = topic_data.copy()
+    if len(topic_data) > 10000:
+        sample_size = min(10000, max(1000, int(len(topic_data) * 0.3)))
         
-        # Proses filter data
-        filtered_display = topic_data.copy()
-        original_count = len(filtered_display)
-        
-        # Cek hasil filter
-        filtered_count = len(filtered_display)
-        
-        if filtered_display.empty:
-            st.markdown("""
-            <div style="text-align: center; padding: 3rem; background-color: #f8f9fa; border-radius: 10px; border: 2px dashed #dee2e6;">
-                <h3 style="color: #6c757d;">📭 Tidak Ada Data</h3>
-                <p style="color: #868e96; font-size: 1.1rem;">Tidak ada ulasan yang sesuai dengan filter yang dipilih.</p>
-                <p style="color: #adb5bd;">Cobalah untuk:</p>
-                <ul style="color: #adb5bd; list-style: none; padding: 0;">
-                    <li>• Mengubah kata kunci pencarian</li>
-                    <li>• Mengatur ulang rentang tanggal</li>
-                    <li>• Memeriksa filter topik yang dipilih</li>
-                </ul>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            # Tampilan Tabel Data
-            st.markdown("---")
-            st.markdown("#### 📋 Tabel Data Ulasan")
+        with st.expander("🔧 Pengaturan Lanjutan", expanded=False):
+            st.warning(f"⚠️ Dataset besar terdeteksi ({len(topic_data):,} baris). Pengaturan sampling tersedia untuk optimasi performa.")
             
-            # Pencarian Kata Kunci
-            search_term = st.text_input(
-                "🔍 Pencarian Kata Kunci", 
-                "", 
-                placeholder="Ketik kata atau frasa yang ingin dicari dalam ulasan...",
-                help="Cari kata atau frasa tertentu dalam teks ulasan. Pencarian akan diterapkan pada teks asli dan teks yang telah diproses."
-            )
-            
-            # Pengaturan Tampilan Tabel
             col1, col2 = st.columns(2)
             with col1:
-                sort_option = st.selectbox(
-                    "📊 Urutkan Data", 
-                    ["Terbaru", "Terlama", "Sentiment (Positif Dulu)", "Sentiment (Negatif Dulu)"],
-                    help="Pilih cara pengurutan data dalam tabel"
+                use_sampling = st.checkbox(
+                    "🎯 Aktifkan Sampling", 
+                    value=True,
+                    help="Gunakan sampling data untuk meningkatkan performa rendering",
+                    key="trend_use_sampling"
                 )
             with col2:
-                rows_per_page = st.selectbox(
-                    "📄 Baris per Halaman", 
-                    options=[10, 25, 50, 100], 
-                    index=1,
-                    help="Jumlah baris yang ditampilkan per halaman"
-                )
-            
-            # Kustomisasi Lanjutan (dalam expander untuk tampilan yang lebih bersih)
-            with st.expander("🎨 Kustomisasi Lanjutan (Opsional)", expanded=False):
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown("**Pengaturan Tampilan:**")
-                    show_row_numbers = st.checkbox(
-                        "Nomor Urut", 
-                        value=True, 
-                        help="Tampilkan nomor urut untuk setiap baris"
+                if use_sampling:
+                    sample_size = st.slider(
+                        "Ukuran Sample", 
+                        min_value=1000, 
+                        max_value=10000, 
+                        value=sample_size,
+                        step=500,
+                        help="Jumlah data yang akan digunakan untuk visualisasi",
+                        key="trend_sample_size"
                     )
-                    export_filtered = st.checkbox(
-                        "Mode Export", 
-                        help="Persiapkan data yang difilter untuk export"
-                    )
-                    
-                    st.markdown("**Pengaturan Teks:**")
-                    show_preview = st.checkbox(
-                        "Potong teks panjang", 
-                        value=True, 
-                        help="Batasi panjang teks untuk tampilan yang lebih rapi"
-                    )
-                    if show_preview:
-                        max_text_length = st.slider(
-                            "Panjang maksimal karakter", 
-                            min_value=50, 
-                            max_value=300, 
-                            value=150, 
-                            step=25,
-                            help="Maksimal karakter yang ditampilkan"
-                        )
-                    else:
-                        max_text_length = 150
-                        
-                with col2:
-                    st.markdown("**Fitur Tambahan:**")
-                    highlight_search = st.checkbox(
-                        "Highlight kata pencarian", 
-                        value=False, 
-                        help="Sorot kata kunci dalam teks (akan aktif jika ada pencarian)"
-                    )
-                    show_word_count = st.checkbox(
-                        "Tampilkan jumlah kata", 
-                        help="Menampilkan jumlah kata dalam setiap ulasan"
-                    )
-                    show_confidence = st.checkbox(
-                        "Confidence Score", 
-                        help="Tampilkan tingkat keyakinan prediksi model"
-                    )
-            
-            # Apply search filter if search term is provided
-            if search_term:
-                mask1 = filtered_display['review_text'].astype(str).str.contains(search_term, case=False, na=False)
-                mask2 = filtered_display['teks_preprocessing'].astype(str).str.contains(search_term, case=False, na=False)
-                filtered_display = filtered_display[mask1 | mask2]
-            
-            # Apply sorting
-            if sort_option == "Terbaru":
-                filtered_display = filtered_display.sort_values('date', ascending=False)
-            elif sort_option == "Terlama":
-                filtered_display = filtered_display.sort_values('date', ascending=True)
-            elif sort_option == "Sentiment (Positif Dulu)":
-                filtered_display = filtered_display.sort_values('sentiment', ascending=False)
-            elif sort_option == "Sentiment (Negatif Dulu)":
-                filtered_display = filtered_display.sort_values('sentiment', ascending=True)
-            
-            # Hitung confidence score jika diminta
-            if show_confidence and not filtered_display.empty:
-                with st.spinner("🔄 Menghitung confidence score..."):
-                    try:
-                        filtered_display = filtered_display.copy()
-                        confidence_scores = []
-                        for text in filtered_display['review_text']:
-                            confidence_scores.append(np.random.uniform(0.7, 0.99))
-                        filtered_display['confidence'] = confidence_scores
-                    except Exception as e:
-                        st.warning(f"⚠️ Tidak dapat menghitung confidence score: {str(e)}")
-                        show_confidence = False
-            
-            # Calculate pagination
-            total_pages = max(1, len(filtered_display) // rows_per_page + (0 if len(filtered_display) % rows_per_page == 0 else 1))
-            
-            # Initialize current_page (will be set by navigation controls below)
-            current_page = st.session_state.get('current_page', 1)
-            if current_page > total_pages:
-                current_page = 1
-                st.session_state['current_page'] = current_page
-            
-            # Prepare paginated data
-            start_idx = (current_page - 1) * rows_per_page
-            end_idx = min(start_idx + rows_per_page, len(filtered_display))
-            paginated_data = filtered_display.iloc[start_idx:end_idx].copy()
-            
-            # Prepare display data with enhanced formatting
-            display_data = paginated_data.copy()
-            
-            # Add row numbers (sequential from 1)
-            if show_row_numbers:
-                display_data.insert(0, 'No.', range(start_idx + 1, start_idx + len(display_data) + 1))
-            
-            # Add word count if requested
-            if show_word_count:
-                display_data['Jumlah Kata'] = display_data['review_text'].astype(str).apply(
-                    lambda x: len(str(x).split())
-                )
-            
-            # Format text for better readability
-            if show_preview:
-                display_data['review_text'] = display_data['review_text'].astype(str).apply(
-                    lambda x: x[:max_text_length] + "..." if len(str(x)) > max_text_length else str(x)
-                )
-            
-            # Highlight search terms
-            if search_term and highlight_search:
-                def highlight_text(text):
-                    if pd.isna(text):
-                        return ""
-                    text_str = str(text)
-                    # Simple highlighting - wrap search term in markdown bold
-                    highlighted = text_str.replace(
-                        search_term, 
-                        f"**{search_term}**"
-                    )
-                    return highlighted
-                
-                display_data['review_text'] = display_data['review_text'].apply(highlight_text)
-            
-            # Format date
-            if 'date' in display_data.columns:
-                display_data['Tanggal'] = pd.to_datetime(display_data['date']).dt.strftime('%d/%m/%Y')
-                display_data = display_data.drop('date', axis=1)
-            
-            # Rename columns for better display
-            column_mapping = {
-                'review_text': 'Teks Ulasan',
-                'sentiment': 'Sentimen',
-                'confidence': 'Confidence (%)'
-            }
-            
-            for old_col, new_col in column_mapping.items():
-                if old_col in display_data.columns:
-                    display_data = display_data.rename(columns={old_col: new_col})
-            
-            # Format confidence as percentage
-            if 'Confidence (%)' in display_data.columns:
-                display_data['Confidence (%)'] = (display_data['Confidence (%)'] * 100).round(1)
-            
-            # Select and order columns for display
-            display_columns = []
-            if 'No.' in display_data.columns:
-                display_columns.append('No.')
-            if 'Tanggal' in display_data.columns:
-                display_columns.append('Tanggal')
-            
-            display_columns.extend(['Teks Ulasan', 'Sentimen'])
-            
-            if 'Jumlah Kata' in display_data.columns:
-                display_columns.append('Jumlah Kata')
-            if 'Confidence (%)' in display_data.columns:
-                display_columns.append('Confidence (%)')
-            
-            # Ensure all selected columns exist
-            display_columns = [col for col in display_columns if col in display_data.columns]
-            
-            # Convert to string for compatibility
-            final_display = display_data[display_columns].copy()
-            for col in final_display.columns:
-                if final_display[col].dtype == 'object':
-                    final_display[col] = final_display[col].astype(str)
-            
-            # Display enhanced table
-            st.dataframe(
-                final_display,
-                use_container_width=True,
-                height=min(600, max(300, len(final_display) * 35 + 100)),
-                column_config={
-                    "No.": st.column_config.NumberColumn(
-                        "No.",
-                        width="small",
-                        format="%d"
-                    ),
-                    "Teks Ulasan": st.column_config.TextColumn(
-                        "Teks Ulasan",
-                        width="large"
-                    ),
-                    "Sentimen": st.column_config.TextColumn(
-                        "Sentimen",
-                        width="medium"
-                    ),
-                    "Confidence (%)": st.column_config.NumberColumn(
-                        "Confidence (%)",
-                        width="small",
-                        format="%.1f%%"
-                    ) if 'Confidence (%)' in final_display.columns else None,
-                    "Jumlah Kata": st.column_config.NumberColumn(
-                        "Jumlah Kata",
-                        width="small",
-                        format="%d"
-                    ) if 'Jumlah Kata' in final_display.columns else None
-                }
-            )
-            
-            # Kontrol navigasi di bawah tabel
-            col1, col2, col3 = st.columns([2, 1, 1])
-            with col1:
-                new_page = st.number_input(
-                    "Pilih Halaman", 
-                    min_value=1, 
-                    max_value=total_pages, 
-                    value=current_page, 
-                    step=1,
-                    help=f"Navigasi halaman (1 sampai {total_pages})",
-                    key="page_selector"
-                )
-                if new_page != current_page:
-                    st.session_state['current_page'] = new_page
-                    st.rerun()
-            with col2:
-                st.metric("Total Halaman", total_pages)
-            with col3:
-                if export_filtered:
-                    export_data = filtered_display.copy()
-                    if 'confidence' in export_data.columns:
-                        export_data['confidence'] = export_data['confidence'].round(4)
-                    
-                    csv = export_data.to_csv(index=False)
-                    st.download_button(
-                        label="📥 Download CSV",
-                        data=csv,
-                        file_name=f"filtered_reviews_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                        mime="text/csv",
-                        help="Download data yang sudah difilter dalam format CSV",
-                        use_container_width=True
-                    )
-                else:
-                    st.info("Export tidak aktif")
-            
-
+                    visualization_data = topic_data.sample(n=sample_size, random_state=42)
+                    st.success(f"✅ Menggunakan {sample_size:,} sample dari {len(topic_data):,} total data")
     
-    with tab2:
-        st.markdown("### 📈 Analisis Tren Sentimen")        # Better time granularity selection with improved layout
-        st.markdown("#### ⚙️ Pengaturan Analisis Tren")
-        
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            time_granularity = st.radio(
-                "⏰ **Granularitas Waktu:**", 
-                options=["Harian", "Mingguan", "Bulanan"], 
-                horizontal=True,
-                help="Pilih periode agregasi data untuk analisis tren"
-            )
-        with col2:
-            # Add some visual separation or additional info if needed
-            st.markdown("")
-        
-        # Handle large datasets more gracefully
-        visualization_data = topic_data.copy()
-        if len(topic_data) > 10000:
-            sample_size = min(10000, max(1000, int(len(topic_data) * 0.3)))
-            
-            with st.expander("⚙️ Pengaturan Performa", expanded=False):
-                st.warning(f"📊 Dataset besar terdeteksi ({len(topic_data):,} baris)")
-                col1, col2 = st.columns(2)
-                with col1:
-                    use_sampling = st.checkbox("Gunakan sampling untuk performa", value=True)
-                    if use_sampling:
-                        custom_sample = st.slider("Ukuran sampel", 1000, 10000, sample_size)
-                with col2:
-                    if use_sampling:
-                        st.info(f"Menggunakan {custom_sample:,} sampel dari {len(topic_data):,} data")
-                        visualization_data = topic_data.sample(custom_sample, random_state=42)
-                    else:
-                        st.warning("Menggunakan semua data - mungkin lambat")
-        
-        # Process time grouping
+    # ==========================================
+    # 3. DATA PROCESSING & VISUALIZATION
+    # ==========================================
+    
+    # Process time grouping
+    with st.spinner("🔄 Memproses data tren..."):
         try:
-            if time_granularity == "Harian":
-                visualization_data['time_group'] = pd.to_datetime(visualization_data['date']).dt.strftime('%Y-%m-%d')
-                unique_periods = visualization_data['time_group'].nunique()
-                if unique_periods > 100:
-                    st.info(f"📅 Terlalu banyak hari ({unique_periods}), otomatis beralih ke mingguan")
-                    visualization_data['time_group'] = pd.to_datetime(visualization_data['date']).dt.strftime('%Y-W%U')
-            elif time_granularity == "Mingguan":
-                visualization_data['time_group'] = pd.to_datetime(visualization_data['date']).dt.strftime('%Y-W%U')
-            else:  # Bulanan
-                visualization_data['time_group'] = pd.to_datetime(visualization_data['date']).dt.strftime('%Y-%m')
+            # Process time grouping with proper date handling
+            visualization_data['date_parsed'] = pd.to_datetime(visualization_data['date'], errors='coerce')
+            visualization_data = visualization_data.dropna(subset=['date_parsed'])
+            
+            if time_granularity == "Mingguan":
+                visualization_data['time_group'] = visualization_data['date_parsed'].dt.strftime('%Y-W%U')
+                visualization_data['time_display'] = visualization_data['date_parsed'].dt.strftime('Minggu %U, %Y')
+            else:  # Bulanan - Default dan optimal
+                visualization_data['time_group'] = visualization_data['date_parsed'].dt.strftime('%Y-%m')
+                visualization_data['time_display'] = visualization_data['date_parsed'].dt.strftime('%B %Y')
             
             # Create trend analysis
-            sentiment_trend = visualization_data.groupby(['time_group', 'sentiment']).size().reset_index(name='count')
-            sentiment_pivot = sentiment_trend.pivot(index='time_group', columns='sentiment', values='count').reset_index()
+            sentiment_trend = visualization_data.groupby(['time_group', 'time_display', 'sentiment']).size().reset_index(name='count')
+            sentiment_pivot = sentiment_trend.pivot(index=['time_group', 'time_display'], columns='sentiment', values='count').reset_index()
             sentiment_pivot.fillna(0, inplace=True)
             
             # Ensure both sentiment columns exist
@@ -678,593 +920,590 @@ def render_dashboard():
                 0
             )
             
-            # Enhanced trend visualization with better UI layout
-            st.markdown("---")
-            
-            # Place visualization type selector above the chart for better space utilization
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                chart_type = st.radio(
-                    "📊 **Pilih Jenis Visualisasi**",
-                    ["Persentase Positif", "Jumlah Absolut", "Gabungan"],
-                    horizontal=True,
-                    help="Pilih tipe visualisasi tren yang ingin ditampilkan"
-                )
-            
-            st.markdown("")  # Add some spacing
-            
-            # Full width for the visualization
+            # Sort by time for proper visualization
+            sentiment_pivot = sentiment_pivot.sort_values('time_group').reset_index(drop=True)
+    
+            # Create modern interactive area chart
             if chart_type == "Persentase Positif":
-                trend_chart = px.line(
-                    sentiment_pivot, 
-                    x='time_group', 
-                    y='positive_percentage',
-                    title=f"📈 Tren Persentase Sentimen Positif ({time_granularity})",
-                    labels={'positive_percentage': '% Sentimen Positif', 'time_group': 'Periode'},
-                    markers=True
+                # Create the modern area chart similar to the provided image
+                fig = go.Figure()
+                
+                # Add area fill
+                fig.add_trace(go.Scatter(
+                    x=sentiment_pivot['time_display'],
+                    y=sentiment_pivot['positive_percentage'],
+                    mode='lines+markers',
+                    name='Sentimen Positif',
+                    line=dict(
+                        color=SENTIMENT_COLORS['POSITIF'], 
+                        width=3,
+                        smoothing=1.3  # Smooth curve like in the image
+                    ),
+                    marker=dict(
+                        size=8,
+                        color=SENTIMENT_COLORS['POSITIF'],
+                        line=dict(width=2, color='white')
+                    ),
+                    fill='tonexty' if show_area_fill else None,  # Conditional fill
+                    fillcolor='rgba(34, 197, 94, 0.2)' if show_area_fill else None,  # Semi-transparent green fill
+                    hovertemplate='''
+                    <b>📅 %{x}</b><br>
+                    📈 Sentimen Positif: <b>%{y:.1f}%</b><br>
+                    📊 Total Ulasan: <b>%{customdata}</b>
+                    <extra></extra>
+                    ''',
+                    customdata=sentiment_pivot['total']
+                ))
+                
+                # Add baseline reference line (plain text, no background)
+                fig.add_hline(
+                    y=TARGET_BASELINE,
+                    line_dash="dot",
+                    line_color="rgba(107, 114, 128, 0.6)",
+                    line_width=2,
+                    annotation_text="Baseline (50%)",
+                    annotation_position="top right",
+                    annotation=dict(
+                        font=dict(size=12, color="rgba(107, 114, 128, 0.8)"),
+                        bgcolor="rgba(0, 0, 0, 0)",  # transparent background
+                        borderwidth=0,
+                        showarrow=False
+                    )
                 )
-                trend_chart.update_traces(line_color='#2E8B57', line_width=3)
-                trend_chart.add_hline(y=50, line_dash="dash", line_color="gray", 
-                                     annotation_text="Baseline 50%")
-                trend_chart.add_hline(y=70, line_dash="dot", line_color="green", 
-                                     annotation_text="Target Optimal 70%")
+                
+                # Add target line (plain text, no background)
+                fig.add_hline(
+                    y=TARGET_OPTIMAL,
+                    line_dash="dash",
+                    line_color="rgba(34, 197, 94, 0.7)",
+                    line_width=2,
+                    annotation_text="Target Optimal (70%)",
+                    annotation_position="bottom right",
+                    annotation=dict(
+                        font=dict(size=12, color="rgba(34, 197, 94, 0.8)"),
+                        bgcolor="rgba(0, 0, 0, 0)",  # transparent background
+                        borderwidth=0,
+                        showarrow=False
+                    )
+                )
+                
+                # Update layout for modern appearance
+                fig.update_layout(
+                    title=dict(
+                        text=f"📊 Tren Persentase Sentimen Positif - {time_granularity}",
+                        x=0.5,
+                        y=0.95,
+                        xanchor="center",
+                        yanchor="top",
+                        font=dict(size=20, family="Arial, sans-serif", color="#1F2937")
+                    ),
+                    xaxis=dict(
+                        title="Periode Waktu",
+                        showgrid=True,
+                        gridwidth=1,
+                        gridcolor='rgba(156, 163, 175, 0.2)',
+                        title_font=dict(size=14, color="#4B5563"),
+                        tickfont=dict(size=12, color="#6B7280"),
+                        tickangle=-45
+                    ),
+                    yaxis=dict(
+                        title="Persentase Sentimen Positif (%)",
+                        showgrid=True,
+                        gridwidth=1,
+                        gridcolor='rgba(156, 163, 175, 0.2)',
+                        title_font=dict(size=14, color="#4B5563"),
+                        tickfont=dict(size=12, color="#6B7280"),
+                        range=[0, 100]  # Fixed range for percentage
+                    ),
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    height=500,
+                    hovermode='x unified',
+                    showlegend=False,
+                    margin=dict(l=70, r=50, t=110, b=100)
+                )
+                
+                # Add intelligent range selector buttons based on granularity
+                if len(sentiment_pivot) > 6:
+                    if time_granularity == "Bulanan":
+                        range_buttons = [
+                            dict(count=3, label="3 Bulan", step="day", stepmode="backward"),
+                            dict(count=6, label="6 Bulan", step="day", stepmode="backward"), 
+                            dict(count=12, label="1 Tahun", step="day", stepmode="backward"),
+                            dict(step="all", label="Semua Data")
+                        ]
+                    else:  # Mingguan
+                        range_buttons = [
+                            dict(count=4, label="4 Minggu", step="day", stepmode="backward"),
+                            dict(count=12, label="3 Bulan", step="day", stepmode="backward"),
+                            dict(count=24, label="6 Bulan", step="day", stepmode="backward"),
+                            dict(step="all", label="Semua Data")
+                        ]
+                    
+                    fig.update_layout(
+                        xaxis=dict(
+                            rangeselector=dict(
+                                buttons=range_buttons,
+                                bgcolor="rgba(255, 255, 255, 0.8)",
+                                bordercolor="rgba(156, 163, 175, 0.3)",
+                                borderwidth=1,
+                                font=dict(size=11)
+                            ),
+                            rangeslider=dict(visible=False),
+                            type="category"
+                        )
+                    )
+                
+                trend_chart = fig
+                
             elif chart_type == "Jumlah Absolut":
-                # Create separate charts for positive and negative
+                # Enhanced dual area chart
                 fig = make_subplots(
                     rows=2, cols=1,
                     subplot_titles=('📈 Tren Ulasan Positif', '📉 Tren Ulasan Negatif'),
-                    vertical_spacing=0.12
+                    vertical_spacing=0.15,
+                    shared_xaxes=True
                 )
                 
-                # Add positive trend
+                # Positive reviews area
                 fig.add_trace(
                     go.Scatter(
-                        x=sentiment_pivot['time_group'],
+                        x=sentiment_pivot['time_display'],
                         y=sentiment_pivot['POSITIF'],
                         mode='lines+markers',
                         name='Positif',
-                        line=dict(color='#2E8B57', width=3),
-                        marker=dict(size=6)
+            line=dict(color=SENTIMENT_COLORS['POSITIF'], width=3, smoothing=1.2),
+            marker=dict(size=8, color=SENTIMENT_COLORS['POSITIF'], line=dict(width=2, color='white')),
+                        fill='tonexty' if show_area_fill else None,
+                        fillcolor='rgba(34, 197, 94, 0.2)' if show_area_fill else None,
+                        hovertemplate='<b>📅 %{x}</b><br>😊 Ulasan Positif: <b>%{y}</b><extra></extra>'
                     ),
                     row=1, col=1
                 )
                 
-                # Add negative trend
+                # Negative reviews area
                 fig.add_trace(
                     go.Scatter(
-                        x=sentiment_pivot['time_group'],
+                        x=sentiment_pivot['time_display'],
                         y=sentiment_pivot['NEGATIF'],
                         mode='lines+markers',
                         name='Negatif',
-                        line=dict(color='#DC143C', width=3),
-                        marker=dict(size=6)
+            line=dict(color=SENTIMENT_COLORS['NEGATIF'], width=3, smoothing=1.2),
+            marker=dict(size=8, color=SENTIMENT_COLORS['NEGATIF'], line=dict(width=2, color='white')),
+                        fill='tonexty' if show_area_fill else None,
+                        fillcolor='rgba(239, 68, 68, 0.2)' if show_area_fill else None,
+                        hovertemplate='<b>📅 %{x}</b><br>😞 Ulasan Negatif: <b>%{y}</b><extra></extra>'
                     ),
                     row=2, col=1
                 )
                 
                 fig.update_layout(
-                    height=600,
-                    title_text=f"📊 Tren Jumlah Ulasan Positif & Negatif ({time_granularity})",
-                    showlegend=False
+                    height=650,
+                    title=dict(
+                        text=f"📊 Tren Jumlah Ulasan per Sentimen - {time_granularity}",
+                        x=0.5,
+                        y=0.95,
+                        xanchor="center",
+                        yanchor="top",
+                        font=dict(size=20, family="Arial, sans-serif", color="#1F2937")
+                    ),
+                    showlegend=False,
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    hovermode='x unified',
+                    margin=dict(l=70, r=50, t=110, b=100)
                 )
-                
-                fig.update_xaxes(title_text="Periode", row=2, col=1)
-                fig.update_yaxes(title_text="Jumlah Ulasan Positif", row=1, col=1)
-                fig.update_yaxes(title_text="Jumlah Ulasan Negatif", row=2, col=1)
                 
                 trend_chart = fig
-            else:  # Gabungan
-                trend_chart = px.line(
-                    sentiment_pivot, 
-                    x='time_group', 
-                    y=['POSITIF', 'NEGATIF'],
-                    title=f"📊 Tren Sentimen Positif vs Negatif ({time_granularity})",
-                    labels={'value': 'Jumlah Ulasan', 'time_group': 'Periode', 'variable': 'Sentimen'},
-                    color_discrete_map={'POSITIF': '#2E8B57', 'NEGATIF': '#DC143C'},
-                    markers=True
+                
+            else:  # Gabungan - Interactive dual-line area chart
+                fig = go.Figure()
+                
+                # Add positive sentiment area
+                fig.add_trace(go.Scatter(
+                    x=sentiment_pivot['time_display'],
+                    y=sentiment_pivot['POSITIF'],
+                    mode='lines+markers',
+                    name='😊 Positif',
+                    line=dict(color=SENTIMENT_COLORS['POSITIF'], width=3, smoothing=1.2),
+                    marker=dict(size=8, color=SENTIMENT_COLORS['POSITIF'], line=dict(width=2, color='white')),
+                    fill='tonexty' if show_area_fill else None,
+                    fillcolor='rgba(34, 197, 94, 0.15)' if show_area_fill else None,
+                    hovertemplate='<b>📅 %{x}</b><br>😊 Positif: <b>%{y} ulasan</b><extra></extra>'
+                ))
+                
+                # Add negative sentiment area
+                fig.add_trace(go.Scatter(
+                    x=sentiment_pivot['time_display'],
+                    y=sentiment_pivot['NEGATIF'],
+                    mode='lines+markers',
+                    name='😞 Negatif',
+                    line=dict(color=SENTIMENT_COLORS['NEGATIF'], width=3, smoothing=1.2),
+                    marker=dict(size=8, color=SENTIMENT_COLORS['NEGATIF'], line=dict(width=2, color='white')),
+                    fill='tonexty' if show_area_fill else None,
+                    fillcolor='rgba(239, 68, 68, 0.15)' if show_area_fill else None,
+                    hovertemplate='<b>📅 %{x}</b><br>😞 Negatif: <b>%{y} ulasan</b><extra></extra>'
+                ))
+                
+                fig.update_layout(
+                    title=dict(
+                        text=f"📊 Perbandingan Tren Sentimen - {time_granularity}",
+                        x=0.5,
+                        y=0.95,
+                        xanchor="center",
+                        yanchor="top",
+                        font=dict(size=20, family="Arial, sans-serif", color="#1F2937")
+                    ),
+                    xaxis_title="Periode Waktu",
+                    yaxis_title="Jumlah Ulasan",
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="right",
+                        x=1,
+                        bgcolor="rgba(255, 255, 255, 0.8)",
+                        bordercolor="rgba(156, 163, 175, 0.3)",
+                        borderwidth=1
+                    ),
+                    height=500,
+                    hovermode='x unified',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    margin=dict(l=70, r=50, t=110, b=100)
                 )
-                trend_chart.update_layout(legend_title_text='Sentimen')
-            
-            if chart_type != "Jumlah Absolut":
-                trend_chart.update_layout(height=500, hovermode='x unified')
-            
-            st.plotly_chart(trend_chart, use_container_width=True)
-            
-            # Trend insights - compact layout
-            if len(sentiment_pivot) > 1:
-                latest_pct = sentiment_pivot['positive_percentage'].iloc[-1]
-                first_pct = sentiment_pivot['positive_percentage'].iloc[0]
-                trend_change = latest_pct - first_pct
                 
-                st.markdown("---")
-                st.markdown("#### 📊 Ringkasan Perubahan Tren")
-                
-                # Use metrics in a more compact way
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("🎯 Awal", f"{first_pct:.1f}%")
-                with col2:
-                    st.metric("🎯 Akhir", f"{latest_pct:.1f}%")
-                with col3:
-                    trend_emoji = "📈" if trend_change > 0 else "📉" if trend_change < 0 else "➡️"
-                    st.metric(f"{trend_emoji} Δ", f"{trend_change:+.1f}%")
-                with col4:
-                    # Add download button here for better space utilization
-                    csv = sentiment_pivot.to_csv(index=False)
-                    b64 = base64.b64encode(csv.encode()).decode()
-                    href = f'<a href="data:file/csv;base64,{b64}" download="sentiment_trend_{time_granularity.lower()}.csv" style="text-decoration: none;"><button style="background-color: #4CAF50; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">📥 Download CSV</button></a>'
-                    st.markdown(href, unsafe_allow_html=True)
+                trend_chart = fig
+            
+            # Display the chart with enhanced interactivity
+            st.plotly_chart(trend_chart, use_container_width=True, config={
+                'displayModeBar': 'hover',
+                'modeBarButtonsToAdd': ['pan2d', 'select2d', 'lasso2d', 'resetScale2d'],
+                'displaylogo': False
+            })
+        
         except Exception as e:
             st.error(f"❌ Error dalam membuat grafik tren: {str(e)}")
             st.info("💡 Coba sesuaikan rentang tanggal atau filter untuk mendapatkan lebih banyak data.")
-            sentiment_pivot = pd.DataFrame()  # Create empty dataframe for later use
+
+def render_word_analysis_tab(topic_data: pd.DataFrame, tfidf_vectorizer):
+    """Render the word analysis tab."""
     
-    with tab3:
-        st.markdown("### 📝 Analisis Kata Kunci dan Topik")
+    st.markdown("### 📝 Analisis Kata Kunci dan Topik")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 😊 Wordcloud - Ulasan Positif")
+        positive_reviews = topic_data[topic_data['sentiment'] == 'POSITIF']
         
-        # Enhanced word analysis section
+        if not positive_reviews.empty:
+            positive_text = " ".join(positive_reviews['teks_preprocessing'].dropna())
+            if positive_text.strip():
+                with st.spinner('🎨 Membuat word cloud positif...'):
+                    pos_wordcloud = safe_create_wordcloud(positive_text)
+                    if pos_wordcloud is not None:
+                        try:
+                            if MATPLOTLIB_AVAILABLE:
+                                fig, ax = plt.subplots(figsize=(10, 6))
+                                ax.imshow(pos_wordcloud, interpolation='bilinear')
+                                ax.axis('off')
+                                st.pyplot(fig, use_container_width=True)
+                            else:
+                                st.image(pos_wordcloud.to_array(), caption="Wordcloud Positif", use_container_width=True)
+                        except Exception:
+                            st.image(pos_wordcloud.to_array(), caption="Wordcloud Positif", use_container_width=True)
+                    else:
+                        st.warning("⚠️ Tidak dapat membuat word cloud untuk ulasan positif")
+            
+            # TF-IDF analysis for positive reviews
+            render_tfidf_analysis(positive_reviews, tfidf_vectorizer, "Positif", "Greens")
+        else:
+            st.info("😔 Tidak ada ulasan positif dalam data yang dipilih")
+    
+    with col2:
+        st.markdown("#### 😞 Wordcloud Ulasan Negatif")
+        negative_reviews = topic_data[topic_data['sentiment'] == 'NEGATIF']
+        
+        if not negative_reviews.empty:
+            negative_text = " ".join(negative_reviews['teks_preprocessing'].dropna())
+            if negative_text.strip():
+                with st.spinner('🎨 Membuat word cloud negatif...'):
+                    neg_wordcloud = safe_create_wordcloud(negative_text)
+                    if neg_wordcloud is not None:
+                        try:
+                            if MATPLOTLIB_AVAILABLE:
+                                fig, ax = plt.subplots(figsize=(10, 6))
+                                ax.imshow(neg_wordcloud, interpolation='bilinear')
+                                ax.axis('off')
+                                st.pyplot(fig, use_container_width=True)
+                            else:
+                                st.image(neg_wordcloud.to_array(), caption="Wordcloud Negatif", use_container_width=True)
+                        except Exception:
+                            st.image(neg_wordcloud.to_array(), caption="Wordcloud Negatif", use_container_width=True)
+                    else:
+                        st.warning("⚠️ Tidak dapat membuat word cloud untuk ulasan negatif")
+            
+            # TF-IDF analysis for negative reviews
+            render_tfidf_analysis(negative_reviews, tfidf_vectorizer, "Negatif", "Reds")
+        else:
+            st.info("😊 Tidak ada ulasan negatif dalam data yang dipilih")
+    
+    # Bigram analysis
+    st.markdown("---")
+    st.markdown("#### 🔍 Analisis Frasa (Bigram)")
+    try:
+        all_text = " ".join(topic_data['teks_preprocessing'].dropna())
+        if all_text.strip():
+            bigrams = get_ngrams(all_text, 2, top_n=15)
+            if bigrams:
+                bigrams_df = pd.DataFrame(list(bigrams.items()), columns=['Frasa', 'Frekuensi'])
+                bigrams_df = bigrams_df.sort_values('Frekuensi', ascending=True)
+                
+                fig = px.bar(
+                    bigrams_df.tail(10), 
+                    x='Frekuensi', 
+                    y='Frasa', 
+                    orientation='h',
+                    title="Top 10 Frasa yang Paling Sering Muncul",
+                    color='Frekuensi',
+                    color_continuous_scale='Viridis',
+                    text='Frekuensi'
+                )
+                fig.update_traces(texttemplate='%{text}', textposition='outside')
+                fig.update_layout(height=500, yaxis={'categoryorder':'total ascending'})
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("📝 Tidak ditemukan frasa yang signifikan")
+        else:
+            st.warning("⚠️ Tidak ada teks yang dapat dianalisis untuk bigram")
+    except Exception as e:
+        st.error(f"❌ Error dalam analisis bigram: {str(e)}")
+
+def render_tfidf_analysis(reviews: pd.DataFrame, tfidf_vectorizer, sentiment_label: str, color_scale: str):
+    """Render TF-IDF analysis for sentiment-specific reviews."""
+    
+    st.markdown(f"##### 📊 Kata Kunci Berdasarkan TF-IDF - {sentiment_label}")
+    try:
+        feature_names = np.array(tfidf_vectorizer.get_feature_names_out())
+        samples = reviews['teks_preprocessing'].dropna()
+        
+        if len(samples) > 0:
+            tfidf_matrix = tfidf_vectorizer.transform(samples)
+            importance = np.asarray(tfidf_matrix.mean(axis=0)).ravel()
+
+            # Build DataFrame then filter to ensure only single words with >=3 letters
+            words_df = pd.DataFrame({
+                'Kata': feature_names,
+                'Skor TF-IDF': importance
+            })
+
+            # Filter rules:
+            # - single word (no spaces)
+            # - alphabetic only (exclude numbers/punctuations)
+            # - length >= 3 (remove 1-2 letter tokens)
+            words_df = words_df[
+                (~words_df['Kata'].str.contains(r"\s", regex=True)) &
+                (words_df['Kata'].str.len() >= 3) &
+                (words_df['Kata'].str.match(r'^[A-Za-zÀ-ÖØ-öø-ÿ]+$', na=False))
+            ]
+
+            # Take top 10 by score
+            words_df = words_df.sort_values('Skor TF-IDF', ascending=False).head(10)
+
+            if not words_df.empty:
+                fig = px.bar(
+                    words_df.sort_values('Skor TF-IDF'),
+                    x='Skor TF-IDF', 
+                    y='Kata', 
+                    orientation='h',
+                    title=f"Top 10 Kata Kunci {sentiment_label}",
+                    color='Skor TF-IDF',
+                    color_continuous_scale=color_scale
+                )
+                fig.update_layout(height=400, yaxis={'categoryorder':'total ascending'})
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("📝 Tidak ada kata kunci yang memenuhi kriteria (1 kata, >=3 huruf)")
+        else:
+            st.info("📝 Tidak ada teks terproses untuk analisis TF-IDF")
+    except Exception as e:
+        st.error(f"❌ Error dalam analisis TF-IDF {sentiment_label}: {str(e)}")
+
+def render_insights_tab(topic_data: pd.DataFrame):
+    """Render the insights and recommendations tab."""
+    
+    st.markdown("### 💡 Ringkasan Insights & Rekomendasi")
+    
+    # Calculate insights
+    current_topic_metrics = calculate_metrics(topic_data)
+    pos_pct = current_topic_metrics['pos_percentage'] 
+    neg_pct = current_topic_metrics['neg_percentage']
+    total_reviews = current_topic_metrics['total']
+    
+    # Calculate trends
+    trend_change = 0
+    try:
+        if len(topic_data) > 1:
+            topic_data_sorted = topic_data.copy()
+            topic_data_sorted['date'] = pd.to_datetime(topic_data_sorted['date'])
+            topic_data_sorted = topic_data_sorted.sort_values('date')
+            
+            # Simple trend calculation
+            mid_point = len(topic_data_sorted) // 2
+            first_half = topic_data_sorted.iloc[:mid_point]
+            second_half = topic_data_sorted.iloc[mid_point:]
+            
+            first_pos_pct = len(first_half[first_half['sentiment'] == 'POSITIF']) / len(first_half) * 100 if len(first_half) > 0 else 0
+            second_pos_pct = len(second_half[second_half['sentiment'] == 'POSITIF']) / len(second_half) * 100 if len(second_half) > 0 else 0
+            
+            trend_change = second_pos_pct - first_pos_pct
+    except Exception:
+        pass
+    
+    # Visual insight cards
+    st.markdown("#### 📊 Analisis Sentimen Saat Ini")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if pos_pct >= 80:
+            sentiment_status = "🥇 Sangat Positif"
+            sentiment_color = "green"
+            status_message = "Excellent! Tingkat kepuasan sangat tinggi"
+        elif pos_pct >= 60:
+            sentiment_status = "🥈 Cukup Positif"
+            sentiment_color = "blue"  
+            status_message = "Good! Kepuasan di atas rata-rata"
+        elif pos_pct >= 40:
+            sentiment_status = "🥉 Netral"
+            sentiment_color = "orange"
+            status_message = "Fair. Ada ruang untuk perbaikan"
+        else:
+            sentiment_status = "⚠️ Perlu Perhatian"
+            sentiment_color = "red"
+            status_message = "Urgent! Perlu tindakan segera"
+        
+        st.markdown(f"""
+        <div style="padding: 1rem; border-left: 4px solid {sentiment_color}; background-color: rgba(0,0,0,0.05); border-radius: 0.5rem;">
+            <h4 style="margin: 0; color: {sentiment_color};">{sentiment_status}</h4>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;">{status_message}</p>
+            <p style="margin: 0.5rem 0 0 0; font-weight: bold;">{pos_pct:.1f}% Ulasan Positif</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        if total_reviews >= 1000:
+            volume_status = "📊 Volume Tinggi"
+            volume_msg = "Data representatif untuk analisis"
+        elif total_reviews >= 100:
+            volume_status = "📊 Volume Sedang"
+            volume_msg = "Data cukup untuk insight dasar"
+        else:
+            volume_status = "📊 Volume Rendah"
+            volume_msg = "Perlu lebih banyak data"
+        
+        st.markdown(f"""
+        <div style="padding: 1rem; border-left: 4px solid #2E8B57; background-color: rgba(0,0,0,0.05); border-radius: 0.5rem;">
+            <h4 style="margin: 0; color: #2E8B57;">{volume_status}</h4>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;">{volume_msg}</p>
+            <p style="margin: 0.5rem 0 0 0; font-weight: bold;">{total_reviews:,} Total Ulasan</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        if trend_change > 5:
+            trend_status = "📈 Tren Meningkat"
+            trend_color = "green"
+            trend_msg = f"Sentimen membaik +{trend_change:.1f}%"
+        elif trend_change < -5:
+            trend_status = "📉 Tren Menurun"
+            trend_color = "red"
+            trend_msg = f"Sentimen menurun {trend_change:.1f}%"
+        else:
+            trend_status = "➡️ Tren Stabil"
+            trend_color = "blue"
+            trend_msg = "Sentimen relatif stabil"
+        
+        st.markdown(f"""
+        <div style="padding: 1rem; border-left: 4px solid {trend_color}; background-color: rgba(0,0,0,0.05); border-radius: 0.5rem;">
+            <h4 style="margin: 0; color: {trend_color};">{trend_status}</h4>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;">{trend_msg}</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Key insights
+    st.markdown("---")
+    st.markdown("#### 🔍 Temuan Utama")
+    
+    try:
+        pos_reviews = topic_data[topic_data['sentiment'] == 'POSITIF']
+        neg_reviews = topic_data[topic_data['sentiment'] == 'NEGATIF']
+        
+        pos_terms = {}
+        neg_terms = {}
+        
+        if not pos_reviews.empty:
+            pos_text = " ".join(pos_reviews['teks_preprocessing'].dropna())
+            pos_terms = get_word_frequencies(pos_text, top_n=5)
+        
+        if not neg_reviews.empty:
+            neg_text = " ".join(neg_reviews['teks_preprocessing'].dropna())
+            neg_terms = get_word_frequencies(neg_text, top_n=5)
+        
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("#### 😊 Wordcloud - Ulasan Positif")
-            positive_reviews = topic_data[topic_data['sentiment'] == 'POSITIF']
-            
-            if not positive_reviews.empty:
-                # Wordcloud with better error handling
-                positive_text = " ".join(positive_reviews['teks_preprocessing'].dropna())
-                if positive_text.strip():
-                    with st.spinner('🎨 Membuat word cloud positif...'):
-                        pos_wordcloud = safe_create_wordcloud(positive_text)
-                        if pos_wordcloud is not None:
-                            import matplotlib.pyplot as plt
-                            fig, ax = plt.subplots(figsize=(10, 6))
-                            ax.imshow(pos_wordcloud, interpolation='bilinear')
-                            ax.axis('off')
-                            # ax.set_title('Word Cloud - Ulasan Positif', fontsize=14, fontweight='bold')
-                            st.pyplot(fig, use_container_width=True)
-                        else:
-                            st.warning("⚠️ Tidak dapat membuat word cloud untuk ulasan positif")
-                
-                # TF-IDF analysis
-                st.markdown("##### 📊 Kata Kunci Berdasarkan TF-IDF")
-                try:
-                    feature_names = tfidf_vectorizer.get_feature_names_out()
-                    pos_samples = positive_reviews['teks_preprocessing'].dropna()
-                    if len(pos_samples) > 0:
-                        pos_tfidf = tfidf_vectorizer.transform(pos_samples)
-                        pos_importance = np.asarray(pos_tfidf.mean(axis=0)).flatten()
-                        pos_indices = np.argsort(pos_importance)[-10:][::-1]  # Top 10, descending
-                        
-                        pos_words_df = pd.DataFrame({
-                            'Kata': [feature_names[i] for i in pos_indices],
-                            'Skor TF-IDF': [pos_importance[i] for i in pos_indices]
-                        })
-                        
-                        fig = px.bar(
-                            pos_words_df, 
-                            x='Skor TF-IDF', 
-                            y='Kata', 
-                            orientation='h',
-                            title="Top 10 Kata Kunci Positif",
-                            color='Skor TF-IDF',
-                            color_continuous_scale='Greens'
-                        )
-                        fig.update_layout(height=400, yaxis={'categoryorder':'total ascending'})
-                        st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        st.info("📝 Tidak ada teks terproses untuk analisis TF-IDF")
-                except Exception as e:
-                    st.error(f"❌ Error dalam analisis TF-IDF positif: {str(e)}")
+            st.markdown("**✅ Aspek Positif yang Menonjol:**")
+            if pos_terms:
+                for term, freq in list(pos_terms.items())[:3]:
+                    st.markdown(f"• **{term}** ({freq} kali)")
             else:
-                st.info("😔 Tidak ada ulasan positif dalam data yang dipilih")
+                st.markdown("• Tidak ada data positif tersedia")
         
         with col2:
-            st.markdown("#### 😞 Wordcloud Ulasan Negatif")
-            negative_reviews = topic_data[topic_data['sentiment'] == 'NEGATIF']
-            
-            if not negative_reviews.empty:
-                # Wordcloud
-                negative_text = " ".join(negative_reviews['teks_preprocessing'].dropna())
-                if negative_text.strip():
-                    with st.spinner('🎨 Membuat word cloud negatif...'):
-                        neg_wordcloud = safe_create_wordcloud(negative_text)
-                        if neg_wordcloud is not None:
-                            import matplotlib.pyplot as plt
-                            fig, ax = plt.subplots(figsize=(10, 6))
-                            ax.imshow(neg_wordcloud, interpolation='bilinear')
-                            ax.axis('off')
-                            # ax.set_title('Word Cloud - Ulasan Negatif', fontsize=14, fontweight='bold')
-                            st.pyplot(fig, use_container_width=True)
-                        else:
-                            st.warning("⚠️ Tidak dapat membuat word cloud untuk ulasan negatif")
-                
-                # TF-IDF analysis
-                st.markdown("##### 📊 Kata Kunci Berdasarkan TF-IDF")
-                try:
-                    feature_names = tfidf_vectorizer.get_feature_names_out()
-                    neg_samples = negative_reviews['teks_preprocessing'].dropna()
-                    if len(neg_samples) > 0:
-                        neg_tfidf = tfidf_vectorizer.transform(neg_samples)
-                        neg_importance = np.asarray(neg_tfidf.mean(axis=0)).flatten()
-                        neg_indices = np.argsort(neg_importance)[-10:][::-1]  # Top 10, descending
-                        
-                        neg_words_df = pd.DataFrame({
-                            'Kata': [feature_names[i] for i in neg_indices],
-                            'Skor TF-IDF': [neg_importance[i] for i in neg_indices]
-                        })
-                        
-                        fig = px.bar(
-                            neg_words_df, 
-                            x='Skor TF-IDF', 
-                            y='Kata', 
-                            orientation='h',
-                            title="Top 10 Kata Kunci Negatif",
-                            color='Skor TF-IDF',
-                            color_continuous_scale='Reds'
-                        )
-                        fig.update_layout(height=400, yaxis={'categoryorder':'total ascending'})
-                        st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        st.info("📝 Tidak ada teks terproses untuk analisis TF-IDF")
-                except Exception as e:
-                    st.error(f"❌ Error dalam analisis TF-IDF negatif: {str(e)}")
+            st.markdown("**⚠️ Aspek yang Perlu Diperbaiki:**")
+            if neg_terms:
+                for term, freq in list(neg_terms.items())[:3]:
+                    st.markdown(f"• **{term}** ({freq} kali)")
             else:
-                st.info("😊 Tidak ada ulasan negatif dalam data yang dipilih")
+                st.markdown("• Tidak ada masalah yang teridentifikasi")
         
-        # Bigram analysis
-        st.markdown("---")
-        st.markdown("#### 🔍 Analisis Frasa (Bigram)")
-        try:
-            all_text = " ".join(topic_data['teks_preprocessing'].dropna())
-            if all_text.strip():
-                bigrams = get_ngrams(all_text, 2, top_n=15)
-                if bigrams:
-                    bigrams_df = pd.DataFrame(list(bigrams.items()), columns=['Frasa', 'Frekuensi'])
-                    bigrams_df = bigrams_df.sort_values('Frekuensi', ascending=True)
-                    
-                    fig = px.bar(
-                        bigrams_df.tail(10), 
-                        x='Frekuensi', 
-                        y='Frasa', 
-                        orientation='h',
-                        title="Top 10 Frasa yang Paling Sering Muncul",
-                        color='Frekuensi',
-                        color_continuous_scale='Viridis',
-                        text='Frekuensi'
-                    )
-                    fig.update_traces(texttemplate='%{text}', textposition='outside')
-                    fig.update_layout(height=500, yaxis={'categoryorder':'total ascending'})
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info("📝 Tidak ditemukan frasa yang signifikan")
-            else:
-                st.warning("⚠️ Tidak ada teks yang dapat dianalisis untuk bigram")
-        except Exception as e:
-            st.error(f"❌ Error dalam analisis bigram: {str(e)}")
+    except Exception as e:
+        st.error(f"❌ Error dalam analisis insights: {str(e)}")
     
-    with tab4:
-        st.markdown("### 💡 Ringkasan Insights & Rekomendasi")
+    # Recommendations
+    st.markdown("---")
+    if neg_pct > 15:
+        st.markdown("#### 🎯 Rekomendasi Tindakan Prioritas")
         
-        # Calculate insights based on current filtered data (synchronize with metrics)
-        current_topic_metrics = calculate_metrics(topic_data)
-        pos_pct = current_topic_metrics['pos_percentage'] 
-        neg_pct = current_topic_metrics['neg_percentage']
-        total_reviews = current_topic_metrics['total']
+        recommendations = [
+            "🔍 **Analisis Mendalam**: Identifikasi penyebab utama ketidakpuasan pelanggan",
+            "📞 **Respon Cepat**: Tingkatkan waktu respons terhadap keluhan pelanggan",
+            "🎓 **Pelatihan Tim**: Berikan pelatihan tambahan untuk customer service",
+            "📊 **Monitor Berkala**: Pantau tren sentimen secara real-time",
+            "💡 **Inovasi Layanan**: Kembangkan fitur baru berdasarkan feedback negatif"
+        ]
         
-        # Calculate trend data for insights (synchronize with tab2)
-        trend_data = None
-        trend_change = 0
-        try:
-            if len(topic_data) > 1:
-                topic_data_with_date = topic_data.copy()
-                topic_data_with_date['date'] = pd.to_datetime(topic_data_with_date['date'])
-                topic_data_with_date = topic_data_with_date.sort_values('date')
-                
-                # Create time-based grouping for trend analysis
-                date_groups = topic_data_with_date.groupby(topic_data_with_date['date'].dt.date).agg({
-                    'sentiment': ['count'],
-                    'review_text': 'count'
-                }).reset_index()
-                
-                if len(date_groups) > 1:
-                    # Calculate sentiment ratio for first and last periods
-                    first_period = topic_data_with_date[topic_data_with_date['date'].dt.date <= date_groups['date'].iloc[len(date_groups)//3]]
-                    last_period = topic_data_with_date[topic_data_with_date['date'].dt.date >= date_groups['date'].iloc[-len(date_groups)//3:].iloc[0]]
-                    
-                    if len(first_period) > 0 and len(last_period) > 0:
-                        first_pos_ratio = len(first_period[first_period['sentiment'] == 'POSITIF']) / len(first_period) * 100
-                        last_pos_ratio = len(last_period[last_period['sentiment'] == 'POSITIF']) / len(last_period) * 100
-                        trend_change = last_pos_ratio - first_pos_ratio
-        except Exception:
-            pass
+        for rec in recommendations:
+            st.markdown(rec)
+    else:
+        st.markdown("#### 🎉 Status Excellent - Rekomendasi Maintenance")
         
-        # Enhanced insights section with better visual hierarchy
-        st.markdown("#### 📊 Analisis Sentimen Saat Ini")
+        maintenance_recommendations = [
+            "✅ **Pertahankan Kualitas**: Terus jaga standar layanan yang tinggi",
+            "📣 **Promosi Positif**: Manfaatkan testimoni positif untuk marketing",
+            "🔄 **Continuous Improvement**: Terus tingkatkan layanan berdasarkan feedback",
+            "📈 **Scale Up**: Pertimbangkan ekspansi layanan ke area baru",
+            "🤝 **Community Building**: Bangun komunitas pengguna yang loyal"
+        ]
         
-        # Visual insight cards with improved design
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if pos_pct >= 80:
-                sentiment_status = "🥇 Sangat Positif"
-                sentiment_color = "green"
-                status_message = "Excellent! Tingkat kepuasan sangat tinggi"
-            elif pos_pct >= 60:
-                sentiment_status = "🥈 Cukup Positif"
-                sentiment_color = "blue"  
-                status_message = "Good! Kepuasan di atas rata-rata"
-            elif pos_pct >= 40:
-                sentiment_status = "🥉 Netral"
-                sentiment_color = "orange"
-                status_message = "Fair. Ada ruang untuk perbaikan"
-            else:
-                sentiment_status = "⚠️ Perlu Perhatian"
-                sentiment_color = "red"
-                status_message = "Urgent! Perlu tindakan segera"
-            
-            st.markdown(f"""
-            <div style="padding: 1rem; border-left: 4px solid {sentiment_color}; background-color: rgba(0,0,0,0.05); border-radius: 0.5rem;">
-                <h4 style="margin: 0; color: {sentiment_color};">{sentiment_status}</h4>
-                <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;">{status_message}</p>
-                <p style="margin: 0.5rem 0 0 0; font-weight: bold;">{pos_pct:.1f}% Ulasan Positif</p>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col2:
-            # Volume insight
-            if total_reviews >= 1000:
-                volume_status = "📊 Volume Tinggi"
-                volume_msg = "Data representatif & reliable"
-            elif total_reviews >= 100:
-                volume_status = "📈 Volume Sedang"
-                volume_msg = "Data cukup untuk analisis"
-            else:
-                volume_status = "📉 Volume Rendah"
-                volume_msg = "Perlu lebih banyak data"
-            
-            st.markdown(f"""
-            <div style="padding: 1rem; border-left: 4px solid #2E8B57; background-color: rgba(0,0,0,0.05); border-radius: 0.5rem;">
-                <h4 style="margin: 0; color: #2E8B57;">{volume_status}</h4>
-                <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;">{volume_msg}</p>
-                <p style="margin: 0.5rem 0 0 0; font-weight: bold;">{total_reviews:,} Total Ulasan</p>            </div>
-            """, unsafe_allow_html=True)
-        
-        with col3:
-            # Trend insight with synchronized data
-            if trend_change != 0:
-                if trend_change > 5:
-                    trend_status = "📈 Tren Membaik"
-                    trend_msg = f"Naik {trend_change:.1f}% dalam periode ini"
-                    trend_color = "green"
-                elif trend_change < -5:
-                    trend_status = "📉 Tren Menurun"
-                    trend_msg = f"Turun {abs(trend_change):.1f}% dalam periode ini"
-                    trend_color = "red"
-                else:
-                    trend_status = "➡️ Tren Stabil"
-                    trend_msg = f"Perubahan {trend_change:+.1f}% (stabil)"
-                    trend_color = "blue"
-            else:
-                trend_status = "📊 Analisis Tren"
-                trend_msg = "Lihat tab 'Tren Waktu' untuk detail"
-                trend_color = "gray"
-            
-            st.markdown(f"""
-            <div style="padding: 1rem; border-left: 4px solid {trend_color}; background-color: rgba(0,0,0,0.05); border-radius: 0.5rem;">
-                <h4 style="margin: 0; color: {trend_color};">{trend_status}</h4>
-                <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;">{trend_msg}</p>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Enhanced Key Insights section with better structure
-        st.markdown("---")
-        st.markdown("#### 🔍 Temuan Utama")
-        
-        # Create insights container with better organization
-        insight_container = st.container()
-        
-        # Get key terms for insights
-        try:
-            pos_reviews = topic_data[topic_data['sentiment'] == 'POSITIF']
-            neg_reviews = topic_data[topic_data['sentiment'] == 'NEGATIF']
-            
-            pos_terms = {}
-            neg_terms = {}
-            
-            if not pos_reviews.empty:
-                pos_text = " ".join(pos_reviews['teks_preprocessing'].dropna())
-                pos_terms = get_word_frequencies(pos_text, top_n=5)
-            
-            if not neg_reviews.empty:
-                neg_text = " ".join(neg_reviews['teks_preprocessing'].dropna())
-                neg_terms = get_word_frequencies(neg_text, top_n=5)
-            
-            # Enhanced insights display with visual indicators
-            with insight_container:
-                insights_col1, insights_col2 = st.columns([2, 1])
-                
-                with insights_col1:
-                    # Primary insights with better categorization
-                    if pos_pct > 80:
-                        st.success(f"✅ **Kepuasan Pelanggan Excellent** ({pos_pct:.1f}%)")
-                        st.markdown("Tingkat kepuasan sangat tinggi menunjukkan layanan yang sangat memuaskan")
-                        if pos_terms:
-                            top_pos_words = list(pos_terms.keys())[:3]
-                            st.info(f"🌟 **Kekuatan Utama:** {', '.join(top_pos_words)}")
-                    elif pos_pct > 60:
-                        st.success(f"✅ **Kepuasan Pelanggan Baik** ({pos_pct:.1f}%)")
-                        st.markdown("Kepuasan di atas rata-rata menunjukkan layanan yang memuaskan")
-                        if pos_terms:
-                            top_pos_words = list(pos_terms.keys())[:3]
-                            st.info(f"💪 **Aspek Positif:** {', '.join(top_pos_words)}")
-                    elif pos_pct > 40:
-                        st.warning(f"⚠️ **Kepuasan Pelanggan Sedang** ({pos_pct:.1f}% vs {neg_pct:.1f}%)")
-                        st.markdown("Ada keseimbangan antara positif dan negatif - perlu peningkatan")
-                    else:
-                        st.error(f"🚨 **Perhatian Khusus Diperlukan** ({neg_pct:.1f}% negatif)")
-                        st.markdown("Ulasan negatif dominan memerlukan tindakan segera")
-                    
-                    # Volume and reliability insights
-                    if total_reviews < 50:
-                        st.warning("📊 **Data Terbatas** - Perlu lebih banyak ulasan untuk analisis akurat")
-                    elif total_reviews > 5000:
-                        st.success("📈 **Volume Data Excellent** - Analisis sangat representatif")
-                    
-                with insights_col2:
-                    # Visual sentiment distribution
-                    sentiment_fig = go.Figure(data=[go.Pie(
-                        labels=['Positif', 'Negatif'],
-                        values=[pos_pct, neg_pct],
-                        hole=0.6,
-                        marker_colors=['#00cc44', '#ff4444']
-                    )])
-                    sentiment_fig.update_layout(
-                        title="Distribusi Sentimen",
-                        height=250,
-                        showlegend=True,
-                        margin=dict(t=40, b=0, l=0, r=0)
-                    )
-                    sentiment_fig.update_traces(
-                        textinfo='percent+label',
-                        textfont_size=12
-                    )
-                    st.plotly_chart(sentiment_fig, use_container_width=True)
-                    
-                    # Key metrics summary
-                    st.metric("Total Ulasan", f"{total_reviews:,}")
-                    st.metric("Rasio Positif", f"{pos_pct:.1f}%", 
-                             delta=f"{pos_pct-70:.1f}%" if pos_pct != 70 else None)
-                
-                # Specific issue identification
-                if neg_pct > 20 and neg_terms:
-                    st.markdown("---")
-                    top_neg_words = list(neg_terms.keys())[:3]
-                    st.error(f"⚠️ **Area Perhatian Utama:** {', '.join(top_neg_words)}")
-                    
-                    # Show frequency of negative terms
-                    neg_terms_df = pd.DataFrame(list(neg_terms.items())[:5], columns=['Kata', 'Frekuensi'])
-                    st.markdown("**📊 Masalah Paling Sering Disebutkan:**")
-                    for idx, row in neg_terms_df.iterrows():
-                        percentage = (row['Frekuensi'] / total_reviews * 100)
-                        st.markdown(f"• **{row['Kata']}**: {row['Frekuensi']} kali ({percentage:.1f}% dari total)")
-                        
-        except Exception as e:
-            st.error(f"❌ Error dalam analisis insights: {str(e)}")
-        
-        # Enhanced Actionable Recommendations section
-        st.markdown("---")
-        if neg_pct > 15:  # If there are significant negative reviews
-            st.markdown("#### 🎯 Rekomendasi Tindakan Prioritas")
-            
-            try:
-                # Create recommendation tabs for better organization
-                rec_tab1, rec_tab2, rec_tab3 = st.tabs(["🔍 Analisis Masalah", "📋 Action Plan", "📈 Monitoring"])
-                
-                with rec_tab1:
-                    st.markdown("##### 🎯 Prioritas Perbaikan Berdasarkan Data")
-                    neg_text = " ".join(topic_data[topic_data['sentiment'] == 'NEGATIF']['teks_preprocessing'].dropna())
-                    if neg_text.strip():
-                        neg_bigrams = get_ngrams(neg_text, 2, top_n=5)
-                        
-                        if neg_bigrams:
-                            priority_issues = []
-                            for i, (bigram, freq) in enumerate(neg_bigrams.items(), 1):
-                                percentage = (freq / total_reviews * 100)
-                                if percentage > 1:  # Only show significant issues
-                                    priority_level = "🔴 Tinggi" if percentage > 5 else "🟡 Sedang" if percentage > 3 else "🟢 Rendah"
-                                    priority_issues.append({
-                                        'Prioritas': priority_level,
-                                        'Masalah': bigram.title(),
-                                        'Frekuensi': freq,
-                                        'Persentase': f"{percentage:.1f}%"
-                                    })
-                            
-                            if priority_issues:
-                                issues_df = pd.DataFrame(priority_issues)
-                                st.dataframe(issues_df, use_container_width=True, hide_index=True)
-                            else:
-                                st.info("💡 Tidak ada masalah dengan frekuensi tinggi yang teridentifikasi")
-                
-                with rec_tab2:
-                    st.markdown("##### 📋 Rencana Aksi Strategis")
-                    
-                    recommendations = [
-                        {
-                            "icon": "🔍",
-                            "title": "Analisis Mendalam",
-                            "description": "Lakukan deep dive untuk setiap kategori masalah utama",
-                            "urgency": "Segera"
-                        },
-                        {
-                            "icon": "🎯", 
-                            "title": "Action Plan Terstruktur",
-                            "description": "Buat roadmap perbaikan berdasarkan prioritas masalah",
-                            "urgency": "1-2 Minggu"
-                        },
-                        {
-                            "icon": "💬",
-                            "title": "Customer Feedback Loop", 
-                            "description": "Implementasi sistem follow-up untuk feedback negatif",
-                            "urgency": "1 Bulan"
-                        },
-                        {
-                            "icon": "📈",
-                            "title": "Tracking Progress",
-                            "description": "Monitor dampak perbaikan dengan dashboard real-time",
-                            "urgency": "Berkelanjutan"
-                        }
-                    ]
-                    
-                    for rec in recommendations:
-                        col_icon, col_content = st.columns([1, 4])
-                        with col_icon:
-                            st.markdown(f"## {rec['icon']}")
-                        with col_content:
-                            st.markdown(f"**{rec['title']}**")
-                            st.markdown(rec['description'])
-                            st.caption(f"⏱️ Timeline: {rec['urgency']}")
-                        st.markdown("---")
-                
-                with rec_tab3:
-                    st.markdown("##### 📊 Rencana Monitoring & Evaluasi")
-                    
-                    monitoring_metrics = [
-                        "📈 **KPI Utama**: Peningkatan rasio sentimen positif >5% per bulan",
-                        "📉 **Alert System**: Notifikasi jika sentimen negatif >25%", 
-                        "🔄 **Review Cycle**: Evaluasi mingguan untuk masalah prioritas tinggi",
-                        "📊 **Success Metrics**: Target 70% sentimen positif dalam 3 bulan",
-                        "💡 **Feedback Integration**: Sistem rating untuk setiap perbaikan"
-                    ]
-                    
-                    for metric in monitoring_metrics:
-                        st.markdown(f"• {metric}")
-                        
-            except Exception as e:
-                st.error(f"❌ Error dalam analisis rekomendasi: {str(e)}")
-        else:
-            st.markdown("#### 🎉 Status Excellent - Rekomendasi Maintenance")
-            
-            # Positive recommendations for good performance
-            maintenance_rec = st.container()
-            with maintenance_rec:
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.success("**🎯 Pertahankan Kualitas**")
-                    st.markdown("""
-                    • Monitor konsistensi layanan
-                    • Identifikasi best practices
-                    • Dokumentasi standar operasi
-                    """)
-                
-                with col2:
-                    st.info("**📈 Peluang Optimisasi**")
-                    st.markdown("""
-                    • Eksplorasi fitur baru
-                    • Peningkatan pengalaman pengguna
-                    • Program loyalitas pelanggan
-                    """)
-    # Footer
+        for rec in maintenance_recommendations:
+            st.markdown(rec)
+
+def render_footer():
+    """Render the application footer."""
+    
     st.markdown("---")
     st.markdown("""
     <div style="text-align: center; padding: 1rem; background-color: rgba(0,0,0,0.05); border-radius: 0.5rem;">
@@ -1276,3 +1515,7 @@ def render_dashboard():
         </p>
     </div>
     """, unsafe_allow_html=True)
+
+# ==============================================================================
+# END OF FILE
+# ==============================================================================

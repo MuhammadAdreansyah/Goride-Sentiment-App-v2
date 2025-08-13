@@ -19,6 +19,8 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+import re
+from collections import defaultdict
 from plotly.subplots import make_subplots
 
 # Matplotlib is optional; wordclouds will be shown via image arrays if unavailable
@@ -1331,175 +1333,216 @@ def render_tfidf_analysis(reviews: pd.DataFrame, tfidf_vectorizer, sentiment_lab
         st.error(f"❌ Error dalam analisis TF-IDF {sentiment_label}: {str(e)}")
 
 def render_insights_tab(topic_data: pd.DataFrame):
-    """Render the insights and recommendations tab."""
-    
+    """Render the insights and recommendations tab dengan analisis aspek bermakna."""
+
     st.markdown("### 💡 Ringkasan Insights & Rekomendasi")
-    
-    # Calculate insights
-    current_topic_metrics = calculate_metrics(topic_data)
-    pos_pct = current_topic_metrics['pos_percentage'] 
-    neg_pct = current_topic_metrics['neg_percentage']
-    total_reviews = current_topic_metrics['total']
-    
-    # Calculate trends
-    trend_change = 0
-    try:
-        if len(topic_data) > 1:
-            topic_data_sorted = topic_data.copy()
-            topic_data_sorted['date'] = pd.to_datetime(topic_data_sorted['date'])
-            topic_data_sorted = topic_data_sorted.sort_values('date')
-            
-            # Simple trend calculation
-            mid_point = len(topic_data_sorted) // 2
-            first_half = topic_data_sorted.iloc[:mid_point]
-            second_half = topic_data_sorted.iloc[mid_point:]
-            
-            first_pos_pct = len(first_half[first_half['sentiment'] == 'POSITIF']) / len(first_half) * 100 if len(first_half) > 0 else 0
-            second_pos_pct = len(second_half[second_half['sentiment'] == 'POSITIF']) / len(second_half) * 100 if len(second_half) > 0 else 0
-            
-            trend_change = second_pos_pct - first_pos_pct
-    except Exception:
-        pass
-    
-    # Visual insight cards
-    st.markdown("#### 📊 Analisis Sentimen Saat Ini")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if pos_pct >= 80:
-            sentiment_status = "🥇 Sangat Positif"
-            sentiment_color = "green"
-            status_message = "Excellent! Tingkat kepuasan sangat tinggi"
-        elif pos_pct >= 60:
-            sentiment_status = "🥈 Cukup Positif"
-            sentiment_color = "blue"  
-            status_message = "Good! Kepuasan di atas rata-rata"
-        elif pos_pct >= 40:
-            sentiment_status = "🥉 Netral"
-            sentiment_color = "orange"
-            status_message = "Fair. Ada ruang untuk perbaikan"
-        else:
-            sentiment_status = "⚠️ Perlu Perhatian"
-            sentiment_color = "red"
-            status_message = "Urgent! Perlu tindakan segera"
-        
-        st.markdown(f"""
-        <div style="padding: 1rem; border-left: 4px solid {sentiment_color}; background-color: rgba(0,0,0,0.05); border-radius: 0.5rem;">
-            <h4 style="margin: 0; color: {sentiment_color};">{sentiment_status}</h4>
-            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;">{status_message}</p>
-            <p style="margin: 0.5rem 0 0 0; font-weight: bold;">{pos_pct:.1f}% Ulasan Positif</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        if total_reviews >= 1000:
-            volume_status = "📊 Volume Tinggi"
-            volume_msg = "Data representatif untuk analisis"
-        elif total_reviews >= 100:
-            volume_status = "📊 Volume Sedang"
-            volume_msg = "Data cukup untuk insight dasar"
-        else:
-            volume_status = "📊 Volume Rendah"
-            volume_msg = "Perlu lebih banyak data"
-        
-        st.markdown(f"""
-        <div style="padding: 1rem; border-left: 4px solid #2E8B57; background-color: rgba(0,0,0,0.05); border-radius: 0.5rem;">
-            <h4 style="margin: 0; color: #2E8B57;">{volume_status}</h4>
-            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;">{volume_msg}</p>
-            <p style="margin: 0.5rem 0 0 0; font-weight: bold;">{total_reviews:,} Total Ulasan</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        if trend_change > 5:
-            trend_status = "📈 Tren Meningkat"
-            trend_color = "green"
-            trend_msg = f"Sentimen membaik +{trend_change:.1f}%"
-        elif trend_change < -5:
-            trend_status = "📉 Tren Menurun"
-            trend_color = "red"
-            trend_msg = f"Sentimen menurun {trend_change:.1f}%"
-        else:
-            trend_status = "➡️ Tren Stabil"
-            trend_color = "blue"
-            trend_msg = "Sentimen relatif stabil"
-        
-        st.markdown(f"""
-        <div style="padding: 1rem; border-left: 4px solid {trend_color}; background-color: rgba(0,0,0,0.05); border-radius: 0.5rem;">
-            <h4 style="margin: 0; color: {trend_color};">{trend_status}</h4>
-            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;">{trend_msg}</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Key insights
-    st.markdown("---")
-    st.markdown("#### 🔍 Temuan Utama")
-    
-    try:
-        pos_reviews = topic_data[topic_data['sentiment'] == 'POSITIF']
-        neg_reviews = topic_data[topic_data['sentiment'] == 'NEGATIF']
-        
-        pos_terms = {}
-        neg_terms = {}
-        
-        if not pos_reviews.empty:
-            pos_text = " ".join(pos_reviews['teks_preprocessing'].dropna())
-            pos_terms = get_word_frequencies(pos_text, top_n=5)
-        
-        if not neg_reviews.empty:
-            neg_text = " ".join(neg_reviews['teks_preprocessing'].dropna())
-            neg_terms = get_word_frequencies(neg_text, top_n=5)
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("**✅ Aspek Positif yang Menonjol:**")
-            if pos_terms:
-                for term, freq in list(pos_terms.items())[:3]:
-                    st.markdown(f"• **{term}** ({freq} kali)")
-            else:
-                st.markdown("• Tidak ada data positif tersedia")
-        
-        with col2:
-            st.markdown("**⚠️ Aspek yang Perlu Diperbaiki:**")
-            if neg_terms:
-                for term, freq in list(neg_terms.items())[:3]:
-                    st.markdown(f"• **{term}** ({freq} kali)")
-            else:
-                st.markdown("• Tidak ada masalah yang teridentifikasi")
-        
-    except Exception as e:
-        st.error(f"❌ Error dalam analisis insights: {str(e)}")
-    
-    # Recommendations
-    st.markdown("---")
-    if neg_pct > 15:
-        st.markdown("#### 🎯 Rekomendasi Tindakan Prioritas")
-        
-        recommendations = [
-            "🔍 **Analisis Mendalam**: Identifikasi penyebab utama ketidakpuasan pelanggan",
-            "📞 **Respon Cepat**: Tingkatkan waktu respons terhadap keluhan pelanggan",
-            "🎓 **Pelatihan Tim**: Berikan pelatihan tambahan untuk customer service",
-            "📊 **Monitor Berkala**: Pantau tren sentimen secara real-time",
-            "💡 **Inovasi Layanan**: Kembangkan fitur baru berdasarkan feedback negatif"
-        ]
-        
-        for rec in recommendations:
-            st.markdown(rec)
+
+    # 1. METRIK DASAR
+    metrics = calculate_metrics(topic_data)
+    pos_pct = metrics['pos_percentage']
+    neg_pct = metrics['neg_percentage']
+    total_reviews = metrics['total']
+
+    # 2. TREN 7 HARI (jika ada kolom date)
+    trend_change = 0.0
+    if 'date' in topic_data.columns:
+        try:
+            df_ts = topic_data.copy()
+            df_ts['date'] = pd.to_datetime(df_ts['date'], errors='coerce')
+            recent_cut = pd.Timestamp.now() - pd.Timedelta(days=7)
+            prev_cut = recent_cut - pd.Timedelta(days=7)
+            recent = df_ts[df_ts['date'] >= recent_cut]
+            prev = df_ts[(df_ts['date'] >= prev_cut) & (df_ts['date'] < recent_cut)]
+            if len(prev) > 0 and len(recent) > 0:
+                recent_pos = (recent['sentiment'] == 'POSITIF').mean() * 100
+                prev_pos = (prev['sentiment'] == 'POSITIF').mean() * 100
+                trend_change = recent_pos - prev_pos
+        except Exception:
+            pass
+
+    # 3. STATUS OVERALL
+    if pos_pct >= 75 and trend_change >= 3:
+        status_label = "Sangat Baik"
+        status_desc = "Kepuasan tinggi dan meningkat"
+        status_color = "#16a34a"
+    elif pos_pct < 55 or trend_change <= -3:
+        status_label = "Perlu Perhatian"
+        status_desc = "Perlu tindakan perbaikan segera"
+        status_color = "#dc2626"
     else:
-        st.markdown("#### 🎉 Status Excellent - Rekomendasi Maintenance")
-        
-        maintenance_recommendations = [
-            "✅ **Pertahankan Kualitas**: Terus jaga standar layanan yang tinggi",
-            "📣 **Promosi Positif**: Manfaatkan testimoni positif untuk marketing",
-            "🔄 **Continuous Improvement**: Terus tingkatkan layanan berdasarkan feedback",
-            "📈 **Scale Up**: Pertimbangkan ekspansi layanan ke area baru",
-            "🤝 **Community Building**: Bangun komunitas pengguna yang loyal"
-        ]
-        
-        for rec in maintenance_recommendations:
-            st.markdown(rec)
+        status_label = "Stabil"
+        status_desc = "Sentimen relatif stabil"
+        status_color = "#2563eb"
+
+    # 4. ANALISIS ASPEK
+    @st.cache_data(show_spinner=False)
+    def build_aspect_lexicon():
+        return {
+            'driver': {'driver','pengemudi','ojek','kurir'},
+            'aplikasi': {'aplikasi','app','apps','fitur','versi','update'},
+            'harga': {'harga','tarif','biaya','ongkos','mahal','murah'},
+            'waktu': {'waktu','lama','cepat','delay','menunggu','nunggu','tunggu'},
+            'pembayaran': {'bayar','pembayaran','gopay','cash','tunai','saldo'},
+            'promosi': {'promo','promosi','diskon','voucher','potongan'},
+            'keamanan': {'aman','keamanan','bahaya','kecelakaan','nabrak'},
+            'kenyamanan': {'nyaman','kenyamanan','bersih','panas','bau','helm'},
+            'layanan': {'layanan','service','respon','customer','cs'},
+            'performa': {'error','bug','lambat','lemot','lag','crash','force','close'}
+        }
+
+    STOP_TOKENS = {"nya","yang","itu","di","ke","ku","lah","pun","deh","dong","nih","ya","sih"}
+
+    def normalize_token(tok: str) -> str:
+        tok = tok.lower()
+        tok = re.sub(r'(nya|lah|kah|pun)$','', tok)
+        return tok
+
+    def extract_aspect_stats(df: pd.DataFrame) -> dict:
+        lex = build_aspect_lexicon()
+        inverse = {w: a for a, ws in lex.items() for w in ws}
+        stats = defaultdict(lambda: {"pos":0,"neg":0,"total":0})
+        if 'teks_preprocessing' not in df.columns:
+            return {}
+        for _, row in df.iterrows():
+            sent = row.get('sentiment','')
+            tokens = str(row.get('teks_preprocessing','')).split()
+            aspects_found = set()
+            for t in tokens:
+                t_norm = normalize_token(t)
+                if t_norm in STOP_TOKENS or len(t_norm) < 2:
+                    continue
+                if t_norm in inverse:
+                    aspects_found.add(inverse[t_norm])
+            for a in aspects_found:
+                stats[a]['total'] += 1
+                if sent == 'POSITIF':
+                    stats[a]['pos'] += 1
+                elif sent == 'NEGATIF':
+                    stats[a]['neg'] += 1
+        return stats
+
+    def score_aspects(stats: dict, total_neg: int):
+        scored = []
+        for a, s in stats.items():
+            total_a = s['total']
+            if total_a < max(5, int(0.01 * total_reviews)):
+                continue
+            pos_a, neg_a = s['pos'], s['neg']
+            sentiment_score = (pos_a - neg_a) / max(1, total_a)
+            impact = neg_a / max(1, total_neg)
+            opportunity = impact * (1 - (sentiment_score + 1)/2)
+            scored.append({
+                'aspect': a,
+                'total': total_a,
+                'pos': pos_a,
+                'neg': neg_a,
+                'sentiment_score': sentiment_score,
+                'impact': impact,
+                'opportunity': opportunity
+            })
+        return scored
+
+    def generate_dynamic_recommendations(improvement_areas: list) -> list:
+        templates = {
+            'driver': 'Perkuat pelatihan & quality control driver untuk konsistensi layanan.',
+            'aplikasi': 'Optimalkan stabilitas & UX aplikasi; prioritaskan perbaikan bug paling sering.',
+            'harga': 'Evaluasi struktur tarif & transparansi biaya perjalanan.',
+            'waktu': 'Kurangi waktu tunggu dengan optimasi algoritma penugasan & estimasi.',
+            'pembayaran': 'Perbaiki reliabilitas metode pembayaran & jelaskan kegagalan transaksi.',
+            'promosi': 'Sesuaikan komunikasi promo agar relevan & mudah ditebus pengguna.',
+            'keamanan': 'Tingkatkan edukasi & standar keselamatan perjalanan.',
+            'kenyamanan': 'Pastikan standar kebersihan & kelayakan perlengkapan keselamatan.',
+            'layanan': 'Tingkatkan kecepatan/respons tim dukungan & proaktif tangani keluhan.',
+            'performa': 'Optimalkan performa aplikasi (load time, crash rate).'
+        }
+        recs = []
+        for item in improvement_areas:
+            a = item['aspect']
+            base = templates.get(a, f'Perbaiki kualitas aspek {a}.')
+            recs.append(f"{a.capitalize()}: {base}")
+        if not recs:
+            recs.append('Pertahankan kualitas layanan & eksplor program loyalitas untuk meningkatkan retensi.')
+        return recs
+
+    stats = extract_aspect_stats(topic_data)
+    total_neg = int((topic_data['sentiment'] == 'NEGATIF').sum())
+    scored = score_aspects(stats, total_neg)
+    positive_highlights = sorted(
+        [x for x in scored if x['sentiment_score'] > 0.25],
+        key=lambda d: (d['sentiment_score'], d['total']), reverse=True)[:5]
+    improvement_areas = sorted(
+        [x for x in scored if x['sentiment_score'] < -0.15],
+        key=lambda d: (d['opportunity'], d['neg']), reverse=True)[:5]
+
+    # 5. KARTU STATUS
+    st.markdown("#### 📊 Analisis Sentimen Saat Ini")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown(f"""
+        <div style='border-left:4px solid {status_color};padding:0.75rem 0.9rem;background:#11182712;border-radius:6px;'>
+            <h5 style='margin:0;color:{status_color};'>Status: {status_label}</h5>
+            <div style='font-size:0.85rem;color:#555;'>{status_desc}</div>
+            <div style='margin-top:0.5rem;font-weight:600;'>{pos_pct:.1f}% Positif</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        st.markdown(f"""
+        <div style='border-left:4px solid #0d9488;padding:0.75rem 0.9rem;background:#11182712;border-radius:6px;'>
+            <h5 style='margin:0;color:#0d9488;'>Volume Ulasan</h5>
+            <div style='font-size:0.85rem;color:#555;'>Total ulasan dianalisis</div>
+            <div style='margin-top:0.5rem;font-weight:600;'>{total_reviews:,} Ulasan</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col3:
+        trend_color = '#16a34a' if trend_change > 0 else ('#dc2626' if trend_change < 0 else '#2563eb')
+        st.markdown(f"""
+        <div style='border-left:4px solid {trend_color};padding:0.75rem 0.9rem;background:#11182712;border-radius:6px;'>
+            <h5 style='margin:0;color:{trend_color};'>Tren 7 Hari</h5>
+            <div style='font-size:0.85rem;color:#555;'>Perubahan persentase positif</div>
+            <div style='margin-top:0.5rem;font-weight:600;'>{trend_change:+.1f} p.p</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # 6. TEMUAN UTAMA
+    st.markdown("---")
+    st.markdown("#### 🔍 Temuan Utama Berbasis Aspek")
+    if not scored:
+        st.info("Belum ada aspek terdeteksi atau data preprocessing belum tersedia.")
+        return
+    col_pos, col_neg = st.columns(2)
+    with col_pos:
+        st.markdown("**✅ Aspek Positif yang Menonjol**")
+        if positive_highlights:
+            for item in positive_highlights:
+                st.markdown(f"• **{item['aspect'].capitalize()}** – {item['total']} ulasan (skor {item['sentiment_score']:.2f})")
+        else:
+            st.markdown("_Tidak ada aspek dengan keunggulan signifikan saat ini_")
+    with col_neg:
+        st.markdown("**⚠️ Aspek yang Perlu Diperbaiki**")
+        if improvement_areas:
+            for item in improvement_areas:
+                st.markdown(f"• **{item['aspect'].capitalize()}** – {item['neg']} keluhan (kontribusi {item['impact']*100:.1f}% negatif)")
+        else:
+            st.markdown("_Tidak ada aspek negatif dominan – fokus pada penguatan_")
+
+    # 7. REKOMENDASI DINAMIS
+    st.markdown("---")
+    st.markdown("#### 🎯 Rekomendasi Tindakan Prioritas")
+    recs = generate_dynamic_recommendations(improvement_areas)
+    for r in recs:
+        st.markdown(f"- {r}")
+
+    # 8. NARASI RINGKAS
+    st.markdown("---")
+    narrative = []
+    narrative.append(f"Dari {total_reviews} ulasan, {pos_pct:.1f}% bernada positif dan {neg_pct:.1f}% negatif.")
+    if trend_change != 0:
+        narrative.append(f"Sentimen {'meningkat' if trend_change>0 else 'menurun'} {abs(trend_change):.1f} p.p dalam 7 hari terakhir.")
+    if improvement_areas:
+        top_imp = improvement_areas[0]
+        narrative.append(f"Aspek prioritas: {top_imp['aspect']} (kontribusi {top_imp['impact']*100:.1f}% keluhan).")
+    st.markdown("**Ringkasan:** " + " ".join(narrative))
+    st.caption("Aspek dihitung sekali per ulasan; token tidak bermakna seperti 'nya' diabaikan.")
 
 def render_footer():
     """Render the application footer."""
