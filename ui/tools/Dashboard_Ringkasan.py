@@ -366,12 +366,14 @@ def render_dashboard():
         with col1:
             start_date = st.date_input(
                 "📅 Tanggal Mulai", 
-                value=pd.to_datetime(data['date'], errors='coerce').min()
+                value=pd.to_datetime(data['date'], errors='coerce').min(),
+                key="dashboard_start_date"
             )
         with col2:
             end_date = st.date_input(
                 "📅 Tanggal Selesai", 
-                value=pd.to_datetime(data['date'], errors='coerce').max()
+                value=pd.to_datetime(data['date'], errors='coerce').max(),
+                key="dashboard_end_date"
             )
         with col3:
             st.metric("📊 Total Data Tersedia", len(data))
@@ -553,7 +555,8 @@ def render_data_exploration_section(topic_data: pd.DataFrame):
         "🔍 Pencarian Kata Kunci", 
         "", 
         placeholder="Ketik kata atau frasa yang ingin dicari dalam ulasan...",
-        help="Cari kata atau frasa tertentu dalam teks ulasan."
+        help="Cari kata atau frasa tertentu dalam teks ulasan.",
+        key="dashboard_search_term"
     )
     
     # Display settings
@@ -563,27 +566,29 @@ def render_data_exploration_section(topic_data: pd.DataFrame):
             "📄 Baris per Halaman", 
             [10, 25, 50, 100], 
             index=1,
-            help="Jumlah baris yang ditampilkan per halaman"
+            help="Jumlah baris yang ditampilkan per halaman",
+            key="dashboard_rows_per_page"
         )
     with col2:
         sort_option = st.selectbox(
             "🔄 Urutkan berdasarkan", 
             ["Terbaru", "Terlama", "Sentiment (Positif Dulu)", "Sentiment (Negatif Dulu)"],
-            help="Pilih metode pengurutan data"
+            help="Pilih metode pengurutan data",
+            key="dashboard_sort_option"
         )
     
     # Advanced customization
     with st.expander("🎨 Kustomisasi Lanjutan (Opsional)", expanded=False):
         col1, col2, col3 = st.columns(3)
         with col1:
-            show_row_numbers = st.checkbox("📍 Tampilkan Nomor Baris", value=True)
-            show_word_count = st.checkbox("📊 Tampilkan Jumlah Kata", value=False)
+            show_row_numbers = st.checkbox("📍 Tampilkan Nomor Baris", value=True, key="dashboard_show_row_numbers")
+            show_word_count = st.checkbox("📊 Tampilkan Jumlah Kata", value=False, key="dashboard_show_word_count")
         with col2:
-            show_preview = st.checkbox("👁️ Preview Teks (50 karakter)", value=True)
-            highlight_search = st.checkbox("🎨 Highlight Kata Pencarian", value=True)
+            show_preview = st.checkbox("👁️ Preview Teks (50 karakter)", value=True, key="dashboard_show_preview")
+            highlight_search = st.checkbox("🎨 Highlight Kata Pencarian", value=True, key="dashboard_highlight_search")
         with col3:
-            show_confidence = st.checkbox("📈 Tampilkan Confidence Score", value=False)
-            export_filtered = st.checkbox("💾 Aktifkan Export Filtered", value=False)
+            show_confidence = st.checkbox("📈 Tampilkan Confidence Score", value=False, key="dashboard_show_confidence")
+            export_filtered = st.checkbox("💾 Aktifkan Export Filtered", value=False, key="dashboard_export_filtered")
     
     # Apply filters
     filtered_display = topic_data.copy()
