@@ -454,45 +454,12 @@ def render_dashboard():
             st.success("✅ Preprocessing selesai!")
     
     # ==========================================
-    # 6. TOPIC FILTERING
+    # 6. TOPIC FILTERING (Dinonaktifkan sementara)
     # ==========================================
-    
-    st.markdown("---")
-    st.markdown("## 🏷️ Filter Berdasarkan Topik")
-    
-    # Get topic insights
-    all_words = " ".join(filtered_data['teks_preprocessing'].dropna())
-    word_freq = get_word_frequencies(all_words, top_n=20)
-    topics = ["Semua Topik"] + list(word_freq.keys())
-    
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        selected_topic = st.selectbox(
-            "🔍 Pilih topik untuk analisis mendalam:", 
-            topics,
-            help="Pilih topik spesifik berdasarkan kata yang paling sering muncul dalam ulasan"
-        )
-    with col2:
-        if selected_topic != "Semua Topik":
-            topic_freq = word_freq.get(selected_topic, 0)
-            st.metric("📊 Frekuensi Kata", topic_freq)
-    
-    # Filter data by topic
-    if selected_topic != "Semua Topik":
-        topic_data = filtered_data[
-            filtered_data['teks_preprocessing'].str.contains(selected_topic, case=False, na=False)
-        ].copy()
-        if not topic_data.empty:
-            st.info(f"🎯 Menampilkan {len(topic_data):,} ulasan yang berkaitan dengan topik '{selected_topic}'")
-        else:
-            st.warning(f"⚠️ Tidak ditemukan ulasan untuk topik '{selected_topic}'. Menampilkan semua data.")
-            topic_data = filtered_data.copy()
-    else:
-        topic_data = filtered_data.copy()
-    
-    # Final validation
+    # Filter topik dihapus agar dashboard mencerminkan keseluruhan hasil analisis sentiment.
+    topic_data = filtered_data.copy()
     if topic_data.empty:
-        st.error("❌ Dataset kosong setelah filtering. Mohon periksa filter yang dipilih.")
+        st.error("❌ Dataset kosong setelah preprocessing.")
         return
     
     # ==========================================
@@ -1400,10 +1367,13 @@ def render_insights_tab(topic_data: pd.DataFrame):
     def extract_aspect_stats(df: pd.DataFrame) -> dict:
         lex = build_aspect_lexicon()
         inverse = {w: a for a, ws in lex.items() for w in ws}
-        stats = defaultdict(lambda: {"pos":0,"neg":0,"total":0})
+        # Store counts + index references for verification (explicit structure)
+        def _new_stat():
+            return {"pos": 0, "neg": 0, "total": 0, "pos_ids": set(), "neg_ids": set()}
+        stats = defaultdict(_new_stat)
         if 'teks_preprocessing' not in df.columns:
             return {}
-        for _, row in df.iterrows():
+        for idx, row in df.iterrows():
             sent = row.get('sentiment','')
             tokens = str(row.get('teks_preprocessing','')).split()
             aspects_found = set()
@@ -1417,8 +1387,10 @@ def render_insights_tab(topic_data: pd.DataFrame):
                 stats[a]['total'] += 1
                 if sent == 'POSITIF':
                     stats[a]['pos'] += 1
+                    stats[a]['pos_ids'].add(idx)
                 elif sent == 'NEGATIF':
                     stats[a]['neg'] += 1
+                    stats[a]['neg_ids'].add(idx)
         return stats
 
     def score_aspects(stats: dict, total_neg: int):
@@ -1532,7 +1504,7 @@ def render_insights_tab(topic_data: pd.DataFrame):
     for r in recs:
         st.markdown(f"- {r}")
 
-    # 8. NARASI RINGKAS
+    # 8. NARASI RINGKAS (Mode verifikasi internal telah dihapus untuk production)
     st.markdown("---")
     narrative = []
     narrative.append(f"Dari {total_reviews} ulasan, {pos_pct:.1f}% bernada positif dan {neg_pct:.1f}% negatif.")
