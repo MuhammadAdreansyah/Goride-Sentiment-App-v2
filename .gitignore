@@ -30,6 +30,20 @@ __pycache__
 .Python
 
 # ================================
+# DATA FILES & SENSITIVE DATASETS
+# ================================
+# Menyembunyikan folder meta dan dataset spesifik untuk keamanan
+# sambil tetap mempertahankan struktur folder data/ di repository
+data/meta/
+data/ulasan_goride_preprocessed.csv
+data/ulasan_goride.csv
+
+# Dataset backup atau hasil preprocessing lainnya (opsional)
+data/*_preprocessed.csv
+data/*_backup.csv
+data/*_processed.csv
+
+# ================================
 # LOGS & OUTPUT FILES
 # ================================
 *.log
