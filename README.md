@@ -25,7 +25,7 @@ GoRide Sentiment Analysis adalah aplikasi web berbasis Streamlit yang dirancang 
 - [✨ Deskripsi](#-deskripsi)
 - [📁 Struktur Project](#-struktur-project)
 - [🚀 Fitur Utama](#-fitur-utama)
-- [️ Teknologi yang Digunakan](#️-teknologi-yang-digunakan)
+- [️🛠️Teknologi yang Digunakan](#️-teknologi-yang-digunakan)
 - [🧠 Teknik NLP & Machine Learning](#-teknik-nlp--machine-learning)
 - [📋 Prosedur Instalasi dan Penggunaan](#-prosedur-instalasi-dan-penggunaan)
 - [🔍 Hasil Uji Blackbox](#-hasil-uji-blackbox)
