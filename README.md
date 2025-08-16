@@ -1,14 +1,48 @@
 # 📊 GoRide Sentiment Analysis
 
-![Dashboard Preview](https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=Streamlit&logoColor=white)
-![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![Firebase](https://img.shields.io/badge/Firebase-FFCA28?style=for-the-badge&logo=firebase&logoColor=black)
-![NLP](https://img.shields.io/badge/NLP-00C4CC?style=for-the-badge&logo=natural-language-processing&logoColor=white)
-![ML](https://img.shields.io/badge/Machine_Learning-F7931E?style=for-the-badge&logo=scikit-learn&logoColor=white)
+<div align="center">
+
+![Dashboard Preview](docs/image/4_Halaman%20Dashboard.png)
+
+<p>
+<img src="https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=Streamlit&logoColor=white" alt="Streamlit"/>
+<img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python"/>
+<img src="https://img.shields.io/badge/Firebase-FFCA28?style=for-the-badge&logo=firebase&logoColor=black" alt="Firebase"/>
+<img src="https://img.shields.io/badge/NLP-00C4CC?style=for-the-badge&logo=natural-language-processing&logoColor=white" alt="NLP"/>
+<img src="https://img.shields.io/badge/Machine_Learning-F7931E?style=for-the-badge&logo=scikit-learn&logoColor=white" alt="ML"/>
+</p>
+
+</div>
 
 ## ✨ Deskripsi 
 
 GoRide Sentiment Analysis adalah aplikasi web berbasis Streamlit yang dirancang untuk menganalisis sentimen (positif/negatif) dari ulasan pengguna layanan GoRide dari Google Play Store. Aplikasi ini menggunakan teknologi Natural Language Processing (NLP) dan Machine Learning untuk mengklasifikasikan sentimen ulasan, serta menyajikan visualisasi dan analisis data yang komprehensif.
+
+<div align="center">
+
+### 🌟 Highlights
+
+| 🔐 **Autentikasi Lengkap** | 📊 **Dashboard Interaktif** | 🤖 **ML Real-time** | 📈 **Visualisasi Rich** |
+|:--:|:--:|:--:|:--:|
+| Login Google OAuth | Metrik & Filter | Prediksi Sentimen | Word Cloud & N-gram |
+| ![Login](docs/image/1_Halaman%20Login.png) | ![Dashboard](docs/image/4_Halaman%20Dashboard.png) | ![Prediksi](docs/image/6_Halaman%20Prediksi%20Sentimen.png) | ![Analisis](docs/image/5_Halaman%20Analisis%20Data.png) |
+
+</div>
+
+## 📑 Daftar Isi
+
+- [✨ Deskripsi](#-deskripsi)
+- [📁 Struktur Project](#-struktur-project)
+- [🚀 Fitur Utama](#-fitur-utama)
+- [📸 Screenshots & Preview Aplikasi](#-screenshots--preview-aplikasi)
+- [🛠️ Teknologi yang Digunakan](#️-teknologi-yang-digunakan)
+- [🧠 Teknik NLP & Machine Learning](#-teknik-nlp--machine-learning)
+- [📋 Prosedur Instalasi dan Penggunaan](#-prosedur-instalasi-dan-penggunaan)
+- [🔍 Hasil Uji Blackbox](#-hasil-uji-blackbox)
+- [🛡️ Keamanan & Privasi](#️-keamanan--privasi)
+- [📚 Dokumentasi & Scripts](#-dokumentasi--scripts)
+- [📞 Kontak & Kontribusi](#-kontak--kontribusi)
+- [📜 Lisensi](#-lisensi)
 
 ## 📁 Struktur Project
 
@@ -38,11 +72,31 @@ SentimenGo/
 - Fitur reset password
 - Manajemen sesi pengguna
 
+<div align="center">
+  
+#### 🔑 Halaman Login
+![Halaman Login](docs/image/1_Halaman%20Login.png)
+
+#### 📝 Halaman Registrasi
+![Halaman Registrasi](docs/image/2_Halaman%20Registrasi.png)
+
+#### 🔓 Halaman Reset Password
+![Halaman Reset Password](docs/image/3_Halaman%20Reset%20Password.png)
+
+</div>
+
 ### 📈 Dashboard Ringkasan
 - Visualisasi distribusi sentimen ulasan
 - Filter berdasarkan rentang waktu
 - Metrik kinerja model (akurasi, presisi, recall, F1-score)
 - Ringkasan statistik ulasan
+
+<div align="center">
+  
+#### 📊 Dashboard Utama
+![Dashboard Ringkasan](docs/image/4_Halaman%20Dashboard.png)
+
+</div>
 
 ### 📊 Analisis Data Teks
 - Analisis ulasan dari input manual atau upload CSV
@@ -50,10 +104,24 @@ SentimenGo/
 - Analisis n-gram (unigram, bigram, trigram)
 - Analisis frekuensi kata
 
+<div align="center">
+  
+#### 🔍 Halaman Analisis Data
+![Analisis Data](docs/image/5_Halaman%20Analisis%20Data.png)
+
+</div>
+
 ### 🔍 Prediksi Sentimen Real-time
 - Prediksi sentimen dari teks yang dimasukkan pengguna
 - Penjelasan hasil prediksi dengan probabilitas sentimen
 - Visualisasi hasil prediksi
+
+<div align="center">
+  
+#### 🤖 Halaman Prediksi Sentimen
+![Prediksi Sentimen](docs/image/6_Halaman%20Prediksi%20Sentimen.png)
+
+</div>
 
 ## 🛠️ Teknologi yang Digunakan
 
@@ -83,6 +151,61 @@ SentimenGo/
 - Teknik vektorisasi: Term Frequency-Inverse Document Frequency (TF-IDF)
 - Metrik evaluasi: Akurasi, presisi, recall, F1-score
 - Model disimpan dan di-cache untuk penggunaan efisien
+
+## 📸 Screenshots & Preview Aplikasi
+
+<div align="center">
+
+### 🎯 Flow Penggunaan Aplikasi
+
+#### 1️⃣ Login & Autentikasi
+<table>
+  <tr>
+    <td align="center">
+      <img src="docs/image/1_Halaman%20Login.png" width="300px" alt="Login"/>
+      <br/><b>Halaman Login</b>
+      <br/>Login dengan email/password atau Google OAuth
+    </td>
+    <td align="center">
+      <img src="docs/image/2_Halaman%20Registrasi.png" width="300px" alt="Registrasi"/>
+      <br/><b>Halaman Registrasi</b>
+      <br/>Daftar akun baru dengan mudah
+    </td>
+  </tr>
+</table>
+
+#### 2️⃣ Dashboard & Analisis
+<table>
+  <tr>
+    <td align="center">
+      <img src="docs/image/4_Halaman%20Dashboard.png" width="400px" alt="Dashboard"/>
+      <br/><b>Dashboard Ringkasan</b>
+      <br/>Visualisasi distribusi sentimen dan metrik model
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/image/5_Halaman%20Analisis%20Data.png" width="400px" alt="Analisis"/>
+      <br/><b>Analisis Data</b>
+      <br/>Word cloud, n-gram, dan frekuensi kata
+    </td>
+  </tr>
+</table>
+
+#### 3️⃣ Prediksi & Hasil
+<table>
+  <tr>
+    <td align="center">
+      <img src="docs/image/6_Halaman%20Prediksi%20Sentimen.png" width="400px" alt="Prediksi"/>
+      <br/><b>Prediksi Sentimen</b>
+      <br/>Real-time sentiment analysis dengan probabilitas
+    </td>
+  </tr>
+</table>
+
+---
+
+</div>
 
 ## 📋 Prosedur Instalasi dan Penggunaan
 
@@ -149,30 +272,58 @@ SentimenGo/
 
 ### 📲 Menggunakan Aplikasi
 
+<div align="center">
+
+### 🎮 Panduan Visual Penggunaan
+
+</div>
+
 #### 1️⃣ Halaman Login/Register
+<img src="docs/image/1_Halaman%20Login.png" align="right" width="300px" alt="Login Page"/>
+
 - Masukkan email dan password untuk login
 - Klik "Buat Akun" untuk registrasi
 - Gunakan tombol "Login with Google" untuk autentikasi cepat
 - Fitur "Lupa Password" tersedia untuk reset password
 
+<br clear="right"/>
+
+<img src="docs/image/3_Halaman%20Reset%20Password.png" align="left" width="300px" alt="Reset Password"/>
+
+**Reset Password**: Jika lupa password, gunakan fitur reset password dengan memasukkan email yang terdaftar.
+
+<br clear="left"/>
+
 #### 2️⃣ Dashboard Ringkasan
+<img src="docs/image/4_Halaman%20Dashboard.png" align="right" width="350px" alt="Dashboard"/>
+
 - Lihat ringkasan distribusi sentimen ulasan
 - Gunakan filter tanggal untuk melihat data di rentang waktu tertentu
 - Perhatikan metrik model yang menunjukkan performa klasifikasi
 - Download data dalam format CSV jika diperlukan
 
+<br clear="right"/>
+
 #### 3️⃣ Analisis Data
+<img src="docs/image/5_Halaman%20Analisis%20Data.png" align="left" width="350px" alt="Analisis Data"/>
+
 - Pilih metode input: teks manual atau upload CSV
 - Untuk input manual, ketik ulasan dan klik "Analisis"
 - Untuk upload CSV, pastikan format sesuai (kolom wajib: "content", "date")
 - Lihat hasil analisis dalam bentuk visualisasi interaktif
 - Eksplorasi word cloud, n-gram, dan frekuensi kata
 
+<br clear="left"/>
+
 #### 4️⃣ Prediksi Sentimen
+<img src="docs/image/6_Halaman%20Prediksi%20Sentimen.png" align="right" width="350px" alt="Prediksi Sentimen"/>
+
 - Ketik ulasan di text area
 - Klik tombol "Prediksi Teks"
 - Lihat hasil prediksi sentimen beserta probabilitasnya
 - Perhatikan visualisasi yang menjelaskan hasil prediksi
+
+<br clear="right"/>
 
 ## 🔍 Hasil Uji Blackbox
 
