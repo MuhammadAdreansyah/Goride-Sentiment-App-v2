@@ -1,9 +1,6 @@
 # 📊 GoRide Sentiment Analysis
 
 <div align="center">
-
-![Dashboard Preview](docs/image/4_Halaman%20Dashboard.png)
-
 <p>
 <img src="https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=Streamlit&logoColor=white" alt="Streamlit"/>
 <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python"/>
@@ -11,7 +8,6 @@
 <img src="https://img.shields.io/badge/NLP-00C4CC?style=for-the-badge&logo=natural-language-processing&logoColor=white" alt="NLP"/>
 <img src="https://img.shields.io/badge/Machine_Learning-F7931E?style=for-the-badge&logo=scikit-learn&logoColor=white" alt="ML"/>
 </p>
-
 </div>
 
 ## ✨ Deskripsi 
@@ -61,7 +57,7 @@ SentimenGo/
 
 <div align="center">
 
-### � Preview Aplikasi
+### 🔎 Preview Aplikasi
 
 <table>
   <tr>
@@ -84,7 +80,7 @@ SentimenGo/
   <tr>
     <td align="center">
       <img src="docs/image/4_Halaman%20Dashboard.png" width="250px" alt="Dashboard"/>
-      <br/><b>� Dashboard Ringkasan</b>
+      <br/><b>📊 Dashboard Ringkasan</b>
       <br/>Visualisasi distribusi sentimen
     </td>
     <td align="center">
@@ -283,7 +279,7 @@ SentimenGo/
 | 5.4 | Ketahanan | Menginput teks yang sangat panjang (>5000 karakter) | Aplikasi tetap berfungsi tanpa crash | Aplikasi berhasil memproses teks panjang tanpa error | ✅ Berhasil |
 | 5.5 | Kompatibilitas Browser | Menguji pada browser berbeda (Chrome, Firefox, Safari) | Aplikasi berfungsi dengan baik di semua browser | Aplikasi berjalan baik di semua browser utama | ✅ Berhasil |
 
-## � Keamanan & Privasi
+## 🔒 Keamanan & Privasi
 
 ### ⚠️ Penting untuk Setup Lokal
 
@@ -307,8 +303,6 @@ Untuk menjalankan aplikasi ini secara lokal, Anda perlu:
    # Edit dengan kredensial Anda yang sebenarnya
    # JANGAN commit file secrets yang berisi data asli!
    ```
-
-### 🛡️ Data yang Diproteksi
 
 ### 🛡️ Data yang Diproteksi
 
