@@ -274,28 +274,6 @@ def calculate_metrics(df: pd.DataFrame) -> Dict[str, Any]:
         'satisfaction_score': satisfaction_score
     }
 
-def create_download_link(df: pd.DataFrame, filename: str, link_text: str) -> str:
-    """
-    Create download link for DataFrame as CSV.
-    
-    Args:
-        df: DataFrame to download
-        filename: Name of the file
-        link_text: Text to display for the link
-        
-    Returns:
-        HTML string for download link
-    """
-    csv = df.to_csv(index=False)
-    b64 = base64.b64encode(csv.encode()).decode()
-    href = f'''<a href="data:file/csv;base64,{b64}" download="{filename}" 
-              style="text-decoration: none;">
-              <button style="background-color: #4CAF50; color: white; padding: 8px 16px; 
-                           border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">
-              {link_text}
-              </button></a>'''
-    return href
-
 # ==============================================================================
 # MAIN DASHBOARD FUNCTION
 # ==============================================================================
@@ -577,18 +555,30 @@ def render_data_exploration_section(topic_data: pd.DataFrame):
             key="dashboard_sort_option"
         )
     
-    # Advanced customization
+    # Advanced customization dengan layout yang lebih terstruktur
     with st.expander("🎨 Kustomisasi Lanjutan (Opsional)", expanded=False):
-        col1, col2, col3 = st.columns(3)
-        with col1:
+        st.markdown("*Sesuaikan tampilan tabel dan opsi export sesuai kebutuhan*")
+        
+        # Grup Display Options
+        st.markdown("**📋 Opsi Tampilan:**")
+        display_col1, display_col2 = st.columns(2)
+        with display_col1:
             show_row_numbers = st.checkbox("📍 Tampilkan Nomor Baris", value=True, key="dashboard_show_row_numbers")
-            show_word_count = st.checkbox("📊 Tampilkan Jumlah Kata", value=False, key="dashboard_show_word_count")
-        with col2:
             show_preview = st.checkbox("👁️ Preview Teks (50 karakter)", value=True, key="dashboard_show_preview")
+        with display_col2:
+            show_word_count = st.checkbox("📊 Tampilkan Jumlah Kata", value=False, key="dashboard_show_word_count")
+            show_confidence = st.checkbox("� Tampilkan Confidence Score", value=False, key="dashboard_show_confidence")
+        
+        st.markdown("---")
+        
+        # Grup Search & Export Options
+        st.markdown("**🔍 Opsi Pencarian & Export:**")
+        search_export_col1, search_export_col2 = st.columns(2)
+        with search_export_col1:
             highlight_search = st.checkbox("🎨 Highlight Kata Pencarian", value=True, key="dashboard_highlight_search")
-        with col3:
-            show_confidence = st.checkbox("📈 Tampilkan Confidence Score", value=False, key="dashboard_show_confidence")
-            export_filtered = st.checkbox("💾 Aktifkan Export Filtered", value=False, key="dashboard_export_filtered")
+        with search_export_col2:
+            export_filtered = st.checkbox("� Aktifkan Fitur Export Data", value=False, key="dashboard_export_filtered", 
+                                        help="Aktifkan untuk memungkinkan download data yang telah difilter")
     
     # Apply filters
     filtered_display = topic_data.copy()
@@ -733,27 +723,41 @@ def render_data_exploration_section(topic_data: pd.DataFrame):
         hide_index=True,
     )
     
-    # Navigation controls
-    col1, col2, col3 = st.columns([2, 1, 1])
-    with col1:
+    # Navigation controls dengan layout yang lebih clean
+    nav_col1, nav_col2, nav_col3 = st.columns([3, 2, 2])
+    
+    with nav_col1:
         new_page = st.number_input(
             "Pilih Halaman", 
             min_value=1, 
             max_value=total_pages, 
             value=current_page, 
             step=1,
-            help=f"Navigasi halaman (1 sampai {total_pages})",
+            help=f"Halaman {current_page} dari {total_pages} total halaman",
             key="page_selector"
         )
         if new_page != current_page:
             st.session_state['dashboard_current_page'] = new_page
-    with col2:
-        st.metric("Total Halaman", total_pages)
-    with col3:
+    
+    with nav_col2:
+        pass  # Kolom tengah dikosongkan
+    
+    with nav_col3:
         if export_filtered:
-            st.markdown(create_download_link(filtered_display, "filtered_data.csv", "📥 Download CSV"), unsafe_allow_html=True)
+            # Menggunakan download_button yang lebih clean
+            csv_data = filtered_display.to_csv(index=False)
+            st.download_button(
+                label="📥 Download CSV",
+                data=csv_data,
+                file_name=f"goride_sentiment_filtered_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                help="Download data yang telah difilter"
+            )
         else:
-            st.info("Export dinonaktifkan")
+            st.button("📥 Download CSV", disabled=True, help="Export dinonaktifkan")
+    
+    # Info halaman di bawah pagination - terpisah dari kolom
+    st.caption(f"Halaman {current_page} dari {total_pages} total halaman")
 
 def render_time_trend_tab(topic_data: pd.DataFrame):
     """Render the time trend analysis tab."""
