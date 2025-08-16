@@ -20,12 +20,7 @@ GoRide Sentiment Analysis adalah aplikasi web berbasis Streamlit yang dirancang 
 
 <div align="center">
 
-### 🌟 Highlights
-
-| 🔐 **Autentikasi Lengkap** | 📊 **Dashboard Interaktif** | 🤖 **ML Real-time** | 📈 **Visualisasi Rich** |
-|:--:|:--:|:--:|:--:|
-| Login Google OAuth | Metrik & Filter | Prediksi Sentimen | Word Cloud & N-gram |
-| ![Login](docs/image/1_Halaman%20Login.png) | ![Dashboard](docs/image/4_Halaman%20Dashboard.png) | ![Prediksi](docs/image/6_Halaman%20Prediksi%20Sentimen.png) | ![Analisis](docs/image/5_Halaman%20Analisis%20Data.png) |
+**🔐 Autentikasi** | **📊 Dashboard** | **🤖 ML Analysis** | **📈 Visualisasi**
 
 </div>
 
@@ -34,8 +29,7 @@ GoRide Sentiment Analysis adalah aplikasi web berbasis Streamlit yang dirancang 
 - [✨ Deskripsi](#-deskripsi)
 - [📁 Struktur Project](#-struktur-project)
 - [🚀 Fitur Utama](#-fitur-utama)
-- [📸 Screenshots & Preview Aplikasi](#-screenshots--preview-aplikasi)
-- [🛠️ Teknologi yang Digunakan](#️-teknologi-yang-digunakan)
+- [️ Teknologi yang Digunakan](#️-teknologi-yang-digunakan)
 - [🧠 Teknik NLP & Machine Learning](#-teknik-nlp--machine-learning)
 - [📋 Prosedur Instalasi dan Penggunaan](#-prosedur-instalasi-dan-penggunaan)
 - [🔍 Hasil Uji Blackbox](#-hasil-uji-blackbox)
@@ -65,63 +59,54 @@ SentimenGo/
 
 ## 🚀 Fitur Utama
 
-### 🔐 Sistem Autentikasi Lengkap
-- Login dengan email/password
-- Autentikasi OAuth melalui Google
-- Registrasi pengguna baru
-- Fitur reset password
-- Manajemen sesi pengguna
-
 <div align="center">
-  
-#### 🔑 Halaman Login
-![Halaman Login](docs/image/1_Halaman%20Login.png)
 
-#### 📝 Halaman Registrasi
-![Halaman Registrasi](docs/image/2_Halaman%20Registrasi.png)
+### � Preview Aplikasi
 
-#### 🔓 Halaman Reset Password
-![Halaman Reset Password](docs/image/3_Halaman%20Reset%20Password.png)
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <img src="docs/image/1_Halaman%20Login.png" width="250px" alt="Login"/>
+      <br/><b>🔐 Login & Autentikasi</b>
+      <br/>Email/password & Google OAuth
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/image/2_Halaman%20Registrasi.png" width="250px" alt="Registrasi"/>
+      <br/><b>📝 Registrasi</b>
+      <br/>Daftar akun baru dengan mudah
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/image/3_Halaman%20Reset%20Password.png" width="250px" alt="Reset"/>
+      <br/><b>🔄 Reset Password</b>
+      <br/>Pemulihan akses yang aman
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/image/4_Halaman%20Dashboard.png" width="250px" alt="Dashboard"/>
+      <br/><b>� Dashboard Ringkasan</b>
+      <br/>Visualisasi distribusi sentimen
+    </td>
+    <td align="center">
+      <img src="docs/image/5_Halaman%20Analisis%20Data.png" width="250px" alt="Analisis"/>
+      <br/><b>📈 Analisis Data</b>
+      <br/>Word cloud & N-gram analysis
+    </td>
+    <td align="center">
+      <img src="docs/image/6_Halaman%20Prediksi%20Sentimen.png" width="250px" alt="Prediksi"/>
+      <br/><b>🤖 Prediksi Real-time</b>
+      <br/>Sentiment analysis dengan ML
+    </td>
+  </tr>
+</table>
 
 </div>
 
-### 📈 Dashboard Ringkasan
-- Visualisasi distribusi sentimen ulasan
-- Filter berdasarkan rentang waktu
-- Metrik kinerja model (akurasi, presisi, recall, F1-score)
-- Ringkasan statistik ulasan
-
-<div align="center">
-  
-#### 📊 Dashboard Utama
-![Dashboard Ringkasan](docs/image/4_Halaman%20Dashboard.png)
-
-</div>
-
-### 📊 Analisis Data Teks
-- Analisis ulasan dari input manual atau upload CSV
-- Visualisasi word cloud untuk kata-kata yang sering muncul
-- Analisis n-gram (unigram, bigram, trigram)
-- Analisis frekuensi kata
-
-<div align="center">
-  
-#### 🔍 Halaman Analisis Data
-![Analisis Data](docs/image/5_Halaman%20Analisis%20Data.png)
-
-</div>
-
-### 🔍 Prediksi Sentimen Real-time
-- Prediksi sentimen dari teks yang dimasukkan pengguna
-- Penjelasan hasil prediksi dengan probabilitas sentimen
-- Visualisasi hasil prediksi
-
-<div align="center">
-  
-#### 🤖 Halaman Prediksi Sentimen
-![Prediksi Sentimen](docs/image/6_Halaman%20Prediksi%20Sentimen.png)
-
-</div>
+### ⭐ Fitur Utama
+- **🔐 Sistem Autentikasi Lengkap**: Login email/password, OAuth Google, registrasi, reset password
+- **📊 Dashboard Interaktif**: Visualisasi distribusi sentimen, filter waktu, metrik model
+- **📈 Analisis Data Teks**: Word cloud, n-gram analysis, frekuensi kata, upload CSV
+- **🤖 Prediksi Real-time**: Sentiment analysis real-time dengan probabilitas dan visualisasi
 
 ## 🛠️ Teknologi yang Digunakan
 
@@ -152,62 +137,7 @@ SentimenGo/
 - Metrik evaluasi: Akurasi, presisi, recall, F1-score
 - Model disimpan dan di-cache untuk penggunaan efisien
 
-## 📸 Screenshots & Preview Aplikasi
-
-<div align="center">
-
-### 🎯 Flow Penggunaan Aplikasi
-
-#### 1️⃣ Login & Autentikasi
-<table>
-  <tr>
-    <td align="center">
-      <img src="docs/image/1_Halaman%20Login.png" width="300px" alt="Login"/>
-      <br/><b>Halaman Login</b>
-      <br/>Login dengan email/password atau Google OAuth
-    </td>
-    <td align="center">
-      <img src="docs/image/2_Halaman%20Registrasi.png" width="300px" alt="Registrasi"/>
-      <br/><b>Halaman Registrasi</b>
-      <br/>Daftar akun baru dengan mudah
-    </td>
-  </tr>
-</table>
-
-#### 2️⃣ Dashboard & Analisis
-<table>
-  <tr>
-    <td align="center">
-      <img src="docs/image/4_Halaman%20Dashboard.png" width="400px" alt="Dashboard"/>
-      <br/><b>Dashboard Ringkasan</b>
-      <br/>Visualisasi distribusi sentimen dan metrik model
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="docs/image/5_Halaman%20Analisis%20Data.png" width="400px" alt="Analisis"/>
-      <br/><b>Analisis Data</b>
-      <br/>Word cloud, n-gram, dan frekuensi kata
-    </td>
-  </tr>
-</table>
-
-#### 3️⃣ Prediksi & Hasil
-<table>
-  <tr>
-    <td align="center">
-      <img src="docs/image/6_Halaman%20Prediksi%20Sentimen.png" width="400px" alt="Prediksi"/>
-      <br/><b>Prediksi Sentimen</b>
-      <br/>Real-time sentiment analysis dengan probabilitas
-    </td>
-  </tr>
-</table>
-
----
-
-</div>
-
-## 📋 Prosedur Instalasi dan Penggunaan
+##  Prosedur Instalasi dan Penggunaan
 
 ### 📥 Persyaratan Sistem
 - Python 3.10+
@@ -272,58 +202,30 @@ SentimenGo/
 
 ### 📲 Menggunakan Aplikasi
 
-<div align="center">
-
-### 🎮 Panduan Visual Penggunaan
-
-</div>
-
 #### 1️⃣ Halaman Login/Register
-<img src="docs/image/1_Halaman%20Login.png" align="right" width="300px" alt="Login Page"/>
-
 - Masukkan email dan password untuk login
 - Klik "Buat Akun" untuk registrasi
 - Gunakan tombol "Login with Google" untuk autentikasi cepat
 - Fitur "Lupa Password" tersedia untuk reset password
 
-<br clear="right"/>
-
-<img src="docs/image/3_Halaman%20Reset%20Password.png" align="left" width="300px" alt="Reset Password"/>
-
-**Reset Password**: Jika lupa password, gunakan fitur reset password dengan memasukkan email yang terdaftar.
-
-<br clear="left"/>
-
 #### 2️⃣ Dashboard Ringkasan
-<img src="docs/image/4_Halaman%20Dashboard.png" align="right" width="350px" alt="Dashboard"/>
-
 - Lihat ringkasan distribusi sentimen ulasan
 - Gunakan filter tanggal untuk melihat data di rentang waktu tertentu
 - Perhatikan metrik model yang menunjukkan performa klasifikasi
 - Download data dalam format CSV jika diperlukan
 
-<br clear="right"/>
-
 #### 3️⃣ Analisis Data
-<img src="docs/image/5_Halaman%20Analisis%20Data.png" align="left" width="350px" alt="Analisis Data"/>
-
 - Pilih metode input: teks manual atau upload CSV
 - Untuk input manual, ketik ulasan dan klik "Analisis"
 - Untuk upload CSV, pastikan format sesuai (kolom wajib: "content", "date")
 - Lihat hasil analisis dalam bentuk visualisasi interaktif
 - Eksplorasi word cloud, n-gram, dan frekuensi kata
 
-<br clear="left"/>
-
 #### 4️⃣ Prediksi Sentimen
-<img src="docs/image/6_Halaman%20Prediksi%20Sentimen.png" align="right" width="350px" alt="Prediksi Sentimen"/>
-
 - Ketik ulasan di text area
 - Klik tombol "Prediksi Teks"
 - Lihat hasil prediksi sentimen beserta probabilitasnya
 - Perhatikan visualisasi yang menjelaskan hasil prediksi
-
-<br clear="right"/>
 
 ## 🔍 Hasil Uji Blackbox
 
