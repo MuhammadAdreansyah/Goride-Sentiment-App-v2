@@ -3,5 +3,17 @@ base="dark"
 primaryColor="#0bc122"
 
 
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = true
+maxUploadSize = 200
+cookieSecret = "${COOKIE_SECRET}"
+runOnSave = false
+
+[browser]
+gatherUsageStats = false
+
+
 
 
