@@ -41,7 +41,6 @@ import matplotlib.pyplot as plt
 import plotly.express as px
 import plotly.graph_objects as go
 import joblib
-import nltk
 from wordcloud import WordCloud
 
 # Scikit-learn imports
@@ -56,9 +55,17 @@ from sklearn.pipeline import Pipeline
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline as ImbPipeline
 
-# NLTK imports
-from nltk.util import ngrams
-from nltk.tokenize import word_tokenize
+# Lightweight tokenization helpers (avoid NLTK data downloads on Streamlit Cloud)
+def _simple_word_tokenize(text: str) -> list[str]:
+    try:
+        return re.findall(r"\b\w+\b", text or "")
+    except Exception:
+        return []
+
+def _simple_ngrams(tokens: list[str], n: int) -> list[tuple[str, ...]]:
+    if n <= 0 or not tokens:
+        return []
+    return [tuple(tokens[i:i+n]) for i in range(len(tokens) - n + 1)]
 
 # Indonesian language processing
 from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
@@ -72,55 +79,8 @@ from Sastrawi.StopWordRemover.StopWordRemoverFactory import StopWordRemoverFacto
 # NLTK SETUP - Optimized for Streamlit Cloud
 # ==============================================================================
 
-def ensure_nltk_data():
-    """Ensure NLTK data is available for Streamlit Cloud deployment - Enhanced version"""
-    import nltk
-    import os
-    
-    # Set NLTK data path for Streamlit Cloud
-    nltk_data_dir = os.path.join(os.path.expanduser('~'), 'nltk_data')
-    if not os.path.exists(nltk_data_dir):
-        os.makedirs(nltk_data_dir, exist_ok=True)
-    
-    if nltk_data_dir not in nltk.data.path:
-        nltk.data.path.append(nltk_data_dir)
-    
-    # List of required NLTK data - Updated for latest NLTK versions
-    required_nltk_data = [
-        # Try new punkt_tab first, fallback to punkt for compatibility
-        ('tokenizers/punkt_tab', 'punkt_tab'),
-        ('tokenizers/punkt', 'punkt'),
-        ('corpora/stopwords', 'stopwords'),
-    ]
-    
-    downloaded_data = set()
-    
-    for data_path, data_name in required_nltk_data:
-        try:
-            nltk.data.find(data_path)
-            downloaded_data.add(data_name)
-        except LookupError:
-            if data_name not in downloaded_data:
-                try:
-                    print(f"Downloading NLTK data: {data_name}")
-                    nltk.download(data_name, quiet=True, download_dir=nltk_data_dir)
-                    downloaded_data.add(data_name)
-                except Exception as e:
-                    print(f"Warning: Could not download NLTK data {data_name}: {e}")
-                    # For punkt compatibility: if punkt_tab fails, ensure punkt is available
-                    if data_name == 'punkt_tab':
-                        try:
-                            nltk.download('punkt', quiet=True, download_dir=nltk_data_dir)
-                            downloaded_data.add('punkt')
-                        except Exception:
-                            pass
-
-# Initialize NLTK data quietly
-try:
-    ensure_nltk_data()
-except Exception as e:
-    # Silent fallback for deployment
-    pass
+# Note: We intentionally avoid auto-downloading NLTK data in cloud deploys
+# to prevent cold-start stalls. Tokenization/ngrams below use lightweight regex.
 
 # ==============================================================================
 # CONSTANTS AND CONFIGURATION
@@ -336,7 +296,7 @@ def get_word_frequencies(text: Union[str, List[str]], top_n: int = 10) -> Dict[s
         Dictionary of word frequencies
     """
     try:
-        words = nltk.word_tokenize(text) if isinstance(text, str) else text
+        words = _simple_word_tokenize(text) if isinstance(text, str) else (text or [])
         word_freq = Counter(words)
         return dict(word_freq.most_common(top_n))
     except Exception as e:
@@ -357,13 +317,20 @@ def get_ngrams(text: Union[str, List[str]], n: int, top_n: int = 10) -> Dict[str
         Dictionary of n-gram frequencies
     """
     try:
-        words = nltk.word_tokenize(text) if isinstance(text, str) else text
-        n_grams = list(ngrams(words, n))
+        words = _simple_word_tokenize(text) if isinstance(text, str) else (text or [])
+        n_grams = _simple_ngrams(words, n)
         n_gram_freq = Counter([' '.join(g) for g in n_grams])
         return dict(n_gram_freq.most_common(top_n))
     except Exception as e:
         st.error(f"Error in n-gram analysis: {str(e)}")
         return {}
+
+def tokenize_words(text: str) -> List[str]:
+    """Public helper for tokenizing text consistently across the app."""
+    try:
+        return _simple_word_tokenize(text)
+    except Exception:
+        return []
 
 
 def create_wordcloud(text: Union[str, List[str]], max_words: int = 100, 
