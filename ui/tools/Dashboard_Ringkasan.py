@@ -1297,16 +1297,32 @@ def render_word_analysis_tab(topic_data: pd.DataFrame, tfidf_vectorizer):
         st.info("💡 Coba sesuaikan filter data untuk mendapatkan hasil yang lebih baik.")
 
 def render_tfidf_analysis(reviews: pd.DataFrame, tfidf_vectorizer, sentiment_label: str, color_scale: str):
-    """Render TF-IDF analysis for sentiment-specific reviews."""
+    """Render TF-IDF analysis for sentiment-specific reviews using unified model."""
     
     st.markdown(f"#### 📊 Kata Kunci TF-IDF - {sentiment_label}")
     
     try:
-        feature_names = np.array(tfidf_vectorizer.get_feature_names_out())
+        # Handle unified model (GridSearchCV) - extract TF-IDF from pipeline
+        if hasattr(tfidf_vectorizer, 'best_estimator_'):
+            # This is GridSearchCV - get the pipeline and extract TF-IDF vectorizer
+            pipeline = tfidf_vectorizer.best_estimator_
+            if hasattr(pipeline, 'named_steps') and 'tfidf' in pipeline.named_steps:
+                actual_vectorizer = pipeline.named_steps['tfidf']
+            else:
+                st.warning(f"⚠️ TF-IDF vectorizer tidak ditemukan dalam model unified untuk {sentiment_label}")
+                return
+        elif hasattr(tfidf_vectorizer, 'get_feature_names_out'):
+            # This is direct TF-IDF vectorizer
+            actual_vectorizer = tfidf_vectorizer
+        else:
+            st.warning(f"⚠️ Model format tidak dikenali untuk analisis TF-IDF {sentiment_label}")
+            return
+            
+        feature_names = np.array(actual_vectorizer.get_feature_names_out())
         samples = reviews['teks_preprocessing'].dropna()
         
         if len(samples) > 0:
-            tfidf_matrix = tfidf_vectorizer.transform(samples)
+            tfidf_matrix = actual_vectorizer.transform(samples)
             importance = np.asarray(tfidf_matrix.mean(axis=0)).ravel()
 
             # Build DataFrame then filter to ensure only single words with >=3 letters
