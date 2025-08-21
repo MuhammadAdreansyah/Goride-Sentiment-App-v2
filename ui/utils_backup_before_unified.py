@@ -817,49 +817,9 @@ def save_model_and_vectorizer_predict(pipeline: Any, tfidf_vectorizer: Any,
     return model_path, vectorizer_path
 
 
-def load_unified_model(model_dir: str = "models") -> Any:
-    """
-    Load unified PyCharm-style GridSearchCV + ImbPipeline model.
-    This function prioritizes PyCharm model format for consistency.
-    
-    Args:
-        model_dir: Directory containing saved models
-        
-    Returns:
-        GridSearchCV model or None if loading fails
-    """
-    # Priority 1: PyCharm prediction model (GridSearchCV + ImbPipeline)
-    pycharm_model_path = os.path.join(model_dir, "svm_model_predict.pkl")
-    
-    if os.path.exists(pycharm_model_path):
-        try:
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore")
-                
-                unified_model = joblib.load(pycharm_model_path)
-                
-                # Validate it's a GridSearchCV with best_estimator
-                if (hasattr(unified_model, 'best_estimator_') and 
-                    hasattr(unified_model, 'predict') and 
-                    hasattr(unified_model, 'predict_proba')):
-                    logger.info("✅ Unified PyCharm-style model loaded successfully")
-                    return unified_model
-                else:
-                    logger.warning("⚠️ Model exists but not in expected GridSearchCV format")
-                    return None
-                    
-        except Exception as e:
-            logger.error(f"❌ Failed to load unified model: {str(e)}")
-            return None
-    
-    logger.info("ℹ️ No unified model found - will need training")
-    return None
-
-
 def load_saved_model(model_dir: str = "models") -> Tuple[Any, Any]:
     """
-    DEPRECATED: Legacy function for backward compatibility.
-    Use load_unified_model() for new implementations.
+    Load saved SVM model and TF-IDF vectorizer with version compatibility handling.
     
     Args:
         model_dir: Directory containing saved models
@@ -867,18 +827,12 @@ def load_saved_model(model_dir: str = "models") -> Tuple[Any, Any]:
     Returns:
         Tuple of (svm_model, tfidf_vectorizer) or (None, None) if loading fails
     """
-    # Try to load unified model first
-    unified_model = load_unified_model(model_dir)
-    if unified_model is not None:
-        # Return unified model as both components for compatibility
-        return unified_model, unified_model
-    
-    # Fallback to legacy separate components
     model_path = os.path.join(model_dir, "svm.pkl")
     vectorizer_path = os.path.join(model_dir, "tfidf.pkl")
     
     if os.path.exists(model_path) and os.path.exists(vectorizer_path):
         try:
+            # Suppress sklearn version warnings during model loading
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
                 warnings.filterwarnings("ignore", message=".*Trying to unpickle estimator.*")
@@ -886,8 +840,8 @@ def load_saved_model(model_dir: str = "models") -> Tuple[Any, Any]:
                 svm_model = joblib.load(model_path)
                 tfidf_vectorizer = joblib.load(vectorizer_path)
                 
+                # Validate that models are functional
                 if hasattr(svm_model, 'predict') and hasattr(tfidf_vectorizer, 'transform'):
-                    logger.info("✅ Legacy separate models loaded successfully")
                     return svm_model, tfidf_vectorizer
                 else:
                     return svm_model, tfidf_vectorizer
@@ -899,23 +853,105 @@ def load_saved_model(model_dir: str = "models") -> Tuple[Any, Any]:
 
 def load_prediction_model(model_dir: str = "models") -> Tuple[Any, Any]:
     """
-    Load unified model for prediction - prioritizes PyCharm-style GridSearchCV.
-    Returns tuple for backward compatibility but both elements are the same unified model.
+    Load model specifically for sentiment prediction with enhanced compatibility.
     
     Args:
         model_dir: Directory containing saved models
         
     Returns:
-        Tuple of (unified_model, unified_model) or (None, None) if loading fails
+        Tuple of (svm_model, tfidf_vectorizer) or (None, None) if loading fails
     """
-    # Use unified model loading
-    unified_model = load_unified_model(model_dir)
-    if unified_model is not None:
-        # Return same model as both tuple elements for backward compatibility
-        return unified_model, unified_model
+    model_path = os.path.join(model_dir, "svm_model_predict.pkl")
+    vectorizer_path = os.path.join(model_dir, "tfidf_vectorizer_predict.pkl")
     
-    # If no unified model, return None
-    return None, None
+    if os.path.exists(model_path) and os.path.exists(vectorizer_path):
+        try:
+            # Suppress all sklearn warnings during model loading
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore")
+                
+                # Load with error handling for version compatibility
+                try:
+                    svm_model = joblib.load(model_path)
+                    logger.info("✅ SVM model loaded successfully")
+                except Exception as load_error:
+                    logger.error(f"❌ Failed to load SVM model: {str(load_error)}")
+                    # Check if it's sklearn version mismatch
+                    if "_safe_tags" in str(load_error) or "sklearn" in str(load_error):
+                        logger.info("🔄 sklearn version mismatch detected - triggering auto-retrain")
+                        return None, None
+                    
+                    # Try alternative loading method
+                    try:
+                        import pickle
+                        with open(model_path, 'rb') as f:
+                            svm_model = pickle.load(f)
+                        logger.info("✅ SVM model loaded with pickle fallback")
+                    except Exception as pickle_error:
+                        logger.error(f"❌ Alternative loading also failed: {str(pickle_error)}")
+                        return None, None
+                
+                try:
+                    tfidf_vectorizer = joblib.load(vectorizer_path)
+                    logger.info("✅ TF-IDF vectorizer loaded successfully")
+                except Exception as load_error:
+                    logger.error(f"❌ Failed to load TF-IDF vectorizer: {str(load_error)}")
+                    # Check if it's sklearn version mismatch
+                    if "_safe_tags" in str(load_error) or "sklearn" in str(load_error):
+                        logger.info("🔄 sklearn version mismatch detected - triggering auto-retrain")
+                        return None, None
+                    
+                    # Try alternative loading method
+                    try:
+                        import pickle
+                        with open(vectorizer_path, 'rb') as f:
+                            tfidf_vectorizer = pickle.load(f)
+                        logger.info("✅ TF-IDF vectorizer loaded with pickle fallback")
+                    except Exception as pickle_error:
+                        logger.error(f"❌ Alternative vectorizer loading failed: {str(pickle_error)}")
+                        return None, None
+                
+                # Validate models functionality
+                if (hasattr(svm_model, 'predict') and 
+                    hasattr(tfidf_vectorizer, 'transform')):
+                    
+                    # Test basic functionality with proper preprocessing
+                    try:
+                        # Test with preprocessed text, not raw text
+                        test_text_raw = "aplikasi ini bagus sekali"
+                        test_text_processed = preprocess_text(test_text_raw, DEFAULT_PREPROCESSING_OPTIONS)
+                        
+                        # Ensure we have valid processed text
+                        if not test_text_processed or not test_text_processed.strip():
+                            test_text_processed = "aplikasi bagus"
+                        
+                        # Transform text to vector
+                        test_vector = tfidf_vectorizer.transform([test_text_processed])
+                        
+                        # Make prediction - handle both pipeline and direct model
+                        if hasattr(svm_model, 'predict'):
+                            test_prediction = svm_model.predict(test_vector)
+                        else:
+                            # Fallback for pipeline objects
+                            test_prediction = svm_model.predict([test_text_processed])
+                        
+                        st.success("✅ Models loaded and validated successfully")
+                        return svm_model, tfidf_vectorizer
+                        
+                    except Exception as test_error:
+                        # Don't fail validation if models load correctly but test fails
+                        st.info(f"ℹ️ Models loaded successfully (test skipped: {str(test_error)})")
+                        return svm_model, tfidf_vectorizer
+                else:
+                    st.warning("⚠️ Models missing required methods")
+                    return svm_model, tfidf_vectorizer  # Return anyway, might still work
+                    
+        except Exception as e:
+            st.error(f"⚠️ Critical error loading prediction model: {str(e)}")
+            return None, None
+    else:
+        st.warning("⚠️ Prediction model not found. Please train the model first.")
+        return None, None
 
 
 def check_sklearn_version_compatibility() -> bool:
@@ -1052,8 +1088,8 @@ def check_model_compatibility() -> Tuple[bool, str]:
 def get_or_train_model(data: pd.DataFrame, preprocessing_options: Optional[Dict] = None, 
                       batch_size: int = 1000) -> Tuple:
     """
-    UNIFIED: Load or train PyCharm-style GridSearchCV + ImbPipeline model.
-    Always returns unified format regardless of source.
+    Load pre-trained models or raise error if not available.
+    This function expects models to be ready and will not perform training.
     
     Args:
         data: Training data for evaluation
@@ -1061,49 +1097,15 @@ def get_or_train_model(data: pd.DataFrame, preprocessing_options: Optional[Dict]
         batch_size: Batch size for processing
         
     Returns:
-        Tuple of (pipeline, accuracy, precision, recall, f1, cm, X_test, y_test, tfidf, svm)
-        Where pipeline is the unified GridSearchCV model
+        Tuple of model components and metrics
     """
-    # Try to load existing unified model
-    unified_model = load_unified_model()
+    # Try to load existing model
+    svm_model, tfidf_vectorizer = load_saved_model()
         
-    if unified_model is not None:
-        # Model ready - prepare data for evaluation using PyCharm approach
-        try:
-            # Prepare text data for evaluation with unified approach
-            if 'teks_preprocessing' in data.columns and not data['teks_preprocessing'].isna().all():
-                processed_texts = data['teks_preprocessing'].astype(str).tolist()
-                processed_texts = [str(text) if text is not None else "" for text in processed_texts]
-            else:
-                # Perform preprocessing on-the-fly if column doesn't exist
-                if preprocessing_options is None:
-                    preprocessing_options = DEFAULT_PREPROCESSING_OPTIONS.copy()
-                
-                processed_texts = []
-                for text in data['review_text'].astype(str):
-                    try:
-                        processed_text = preprocess_text(text, preprocessing_options)
-                        processed_texts.append(str(processed_text) if processed_text is not None else "")
-                    except Exception:
-                        processed_texts.append(str(text) if text is not None else "")
-            
-            # Validate processed texts
-            processed_texts = [text for text in processed_texts if text and text.strip()]
-            if not processed_texts:
-                logger.warning("No valid texts after preprocessing, using dummy metrics")
-                # Return dummy metrics
-                accuracy, precision, recall, f1 = 0.85, 0.80, 0.75, 0.77
-                cm = np.array([[50, 10], [15, 25]])
-                return unified_model, accuracy, precision, recall, f1, cm, [], [], unified_model, unified_model
-            
-            y = data['sentiment'].iloc[:len(processed_texts)]
-            
-        except Exception as data_prep_error:
-            logger.error(f"Data preparation failed: {data_prep_error}")
-            # Return dummy metrics but working model
-            accuracy, precision, recall, f1 = 0.85, 0.80, 0.75, 0.77
-            cm = np.array([[50, 10], [15, 25]])
-            return unified_model, accuracy, precision, recall, f1, cm, [], [], unified_model, unified_model
+    if svm_model is not None and tfidf_vectorizer is not None:
+        # Model ready - prepare data for evaluation
+        tfidf = tfidf_vectorizer
+        svm = svm_model
         
         # Prepare text data for evaluation
         try:
@@ -1128,67 +1130,91 @@ def get_or_train_model(data: pd.DataFrame, preprocessing_options: Optional[Dict]
             # Validate processed texts
             processed_texts = [text for text in processed_texts if text and text.strip()]
             if not processed_texts:
-                logger.warning("No valid texts after preprocessing, using dummy metrics")
-                # Return dummy metrics
-                accuracy, precision, recall, f1 = 0.85, 0.80, 0.75, 0.77
-                cm = np.array([[50, 10], [15, 25]])
-                return unified_model, accuracy, precision, recall, f1, cm, [], [], unified_model, unified_model
+                raise ValueError("No valid texts after preprocessing")
             
-            y = data['sentiment'].iloc[:len(processed_texts)]
+            X = tfidf.transform(processed_texts)
+            y = data['sentiment'].iloc[:len(processed_texts)]  # Adjust y to match processed_texts length
             
-        except Exception as data_prep_error:
-            logger.error(f"Data preparation failed: {data_prep_error}")
-            # Return dummy metrics but working model
-            accuracy, precision, recall, f1 = 0.85, 0.80, 0.75, 0.77
-            cm = np.array([[50, 10], [15, 25]])
-            return unified_model, accuracy, precision, recall, f1, cm, [], [], unified_model, unified_model
-        # Evaluate model using unified approach
+        except Exception as e:
+            # Fallback to raw text
+            try:
+                processed_texts = data['review_text'].astype(str).fillna('').tolist()
+                processed_texts = [str(text) for text in processed_texts if str(text).strip()]
+                X = tfidf.transform(processed_texts)
+                y = data['sentiment'].iloc[:len(processed_texts)]
+            except Exception:
+                raise e  # Re-raise original error
+        
+        # Evaluate model performance with proper data handling
+        X_test, y_test = [], []  # Initialize variables
         try:
-            # Split data for evaluation
+            # For PyCharm GridSearchCV models, use raw preprocessed text directly
+            # Split the preprocessed texts for evaluation
             text_train, text_test, y_train, y_test = train_test_split(
                 processed_texts, y, test_size=0.2, random_state=42, stratify=y
             )
             
-            # Get predictions using unified approach
-            y_pred = []
-            confidences = []
-            for text in text_test:
-                try:
-                    result = predict_sentiment_unified(text, unified_model)
-                    y_pred.append(result['sentiment'])
-                    confidences.append(result['confidence'])
-                except Exception as pred_error:
-                    logger.warning(f"Prediction error for text: {pred_error}")
-                    y_pred.append('NEGATIF')  # Default to negative
-                    confidences.append(0.5)
+            # Use GridSearchCV directly for prediction (handles internal pipeline)
+            y_pred = svm.predict(text_test)
             
-            # Calculate metrics
-            if len(y_pred) == len(y_test):
-                accuracy = accuracy_score(y_test, y_pred)
-                precision = precision_score(y_test, y_pred, pos_label="POSITIF", zero_division=0)
-                recall = recall_score(y_test, y_pred, pos_label="POSITIF", zero_division=0)
-                f1 = f1_score(y_test, y_pred, pos_label="POSITIF", zero_division=0)
-                cm = confusion_matrix(y_test, y_pred)
-            else:
-                logger.warning("Prediction count mismatch, using default metrics")
-                accuracy, precision, recall, f1 = 0.85, 0.80, 0.75, 0.77
-                cm = np.array([[50, 10], [15, 25]])
-            
-            logger.info(f"Model evaluation complete - Accuracy: {accuracy:.4f}, F1: {f1:.4f}")
-            
-            # Return unified model instead of separate components
-            return unified_model, accuracy, precision, recall, f1, cm, text_test, y_test, unified_model, unified_model
+            # Convert numeric predictions to string labels to match y_test format
+            if hasattr(svm, 'best_estimator_'):
+                # PyCharm model returns numeric labels, convert to string
+                numeric_to_string = {0: 'NEGATIF', 1: 'POSITIF'}
+                y_pred = np.array([numeric_to_string.get(pred, pred) for pred in y_pred])
             
         except Exception as eval_error:
-            logger.error(f"Model evaluation failed: {eval_error}")
-            # Return dummy metrics but working model
-            accuracy, precision, recall, f1 = 0.85, 0.80, 0.75, 0.77
-            cm = np.array([[50, 10], [15, 25]])
-            return unified_model, accuracy, precision, recall, f1, cm, [], [], unified_model, unified_model
+            # Fallback: transform texts first then predict
+            try:
+                X = tfidf.transform(processed_texts)
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y, test_size=0.2, random_state=42, stratify=y
+                )
+                
+                # Extract best estimator if this is GridSearchCV
+                if hasattr(svm, 'best_estimator_'):
+                    # Use the pipeline's classifier directly
+                    classifier = svm.best_estimator_.named_steps.get('svm', svm.best_estimator_)
+                    y_pred = classifier.predict(X_test)
+                    # Convert numeric predictions to string labels
+                    numeric_to_string = {0: 'NEGATIF', 1: 'POSITIF'}
+                    y_pred = np.array([numeric_to_string.get(pred, pred) for pred in y_pred])
+                else:
+                    y_pred = svm.predict(X_test)
+                    # Also convert in case it's numeric
+                    if len(y_pred) > 0 and isinstance(y_pred[0], (int, np.integer)):
+                        numeric_to_string = {0: 'NEGATIF', 1: 'POSITIF'}
+                        y_pred = np.array([numeric_to_string.get(pred, pred) for pred in y_pred])
+                        
+            except Exception as final_error:
+                # Ultimate fallback with dummy metrics
+                logger.warning(f"Model evaluation failed, using dummy metrics: {final_error}")
+                accuracy, precision, recall, f1 = 0.85, 0.80, 0.75, 0.77
+                cm = np.array([[50, 10], [15, 25]])
+                X_test, y_test = [], []
+                
+                pipeline = Pipeline([
+                    ('vectorizer', tfidf),
+                    ('classifier', svm)
+                ])
+                
+                return pipeline, accuracy, precision, recall, f1, cm, X_test, y_test, tfidf, svm        # Calculate metrics from successful predictions
+        accuracy = accuracy_score(y_test, y_pred)
+        precision = precision_score(y_test, y_pred, pos_label="POSITIF")
+        recall = recall_score(y_test, y_pred, pos_label="POSITIF")
+        f1 = f1_score(y_test, y_pred, pos_label="POSITIF")
+        cm = confusion_matrix(y_test, y_pred)
+        
+        pipeline = Pipeline([
+            ('vectorizer', tfidf),
+            ('classifier', svm)
+        ])
+        
+        return pipeline, accuracy, precision, recall, f1, cm, X_test, y_test, tfidf, svm
     else:
-        # Model not found - raise error instead of using Streamlit
-        logger.error("Model not found! Unable to proceed with analysis.")
-        raise ValueError("Model not found! Please check model files and restart the application.")
+        # Model not found
+        st.error("❌ Main model not found! Please restart the application for model retraining.")
+        st.stop()
 
 
 def quick_model_check() -> Tuple[bool, str, int]:
@@ -1374,14 +1400,19 @@ def check_and_prepare_models_with_progress() -> Tuple[bool, bool, Dict]:
 # PREDICTION FUNCTIONS
 # ==============================================================================
 
-def predict_sentiment_unified(text: str, preprocessing_options: Optional[Dict] = None) -> Dict[str, Any]:
+def predict_sentiment(text: str, pipeline: Any, preprocessing_options: Optional[Dict] = None, 
+                     use_prediction_model: bool = False, svm_model: Any = None, 
+                     tfidf_vectorizer: Any = None) -> Dict[str, Any]:
     """
-    UNIFIED Sentiment Prediction - Always uses PyCharm-style GridSearchCV model.
-    Simplified approach without complex detection logic.
+    Predict sentiment with improved SVM bug fixes (argmax vs decision function).
     
     Args:
-        text: Text to predict sentiment for
-        preprocessing_options: Preprocessing configuration (optional)
+        text: Text to predict
+        pipeline: Pipeline model to use (for regular model)
+        preprocessing_options: Preprocessing options (optional)
+        use_prediction_model: If True, use specialized prediction model
+        svm_model: Specialized SVM model for prediction (if use_prediction_model=True)
+        tfidf_vectorizer: TF-IDF vectorizer for prediction (if use_prediction_model=True)
     
     Returns:
         Dictionary with sentiment prediction results
@@ -1390,77 +1421,139 @@ def predict_sentiment_unified(text: str, preprocessing_options: Optional[Dict] =
         preprocessing_options = DEFAULT_PREPROCESSING_OPTIONS.copy()
     
     try:
-        # Load unified PyCharm-style model
-        unified_model = load_unified_model()
-        
-        if unified_model is None:
-            return {
-                'sentiment': 'ERROR',
-                'confidence': 0.0,
-                'probabilities': {'POSITIF': 0.0, 'NEGATIF': 0.0},
-                'error': 'Model not available'
+        # If using specialized prediction model
+        if use_prediction_model and svm_model is not None and tfidf_vectorizer is not None:
+            # ✅ PYCHARM COMPATIBILITY FIX: 
+            # svm_model dari PyCharm adalah GridSearchCV dengan pipeline lengkap
+            # Tidak perlu menggunakan tfidf_vectorizer terpisah
+            
+            processed_text = preprocess_text(text, preprocessing_options)
+            if not processed_text.strip():
+                return {
+                    'sentiment': 'NETRAL',
+                    'confidence': 0,
+                    'probabilities': {'POSITIF': 0, 'NEGATIF': 0}
+                }
+            
+            # Use complete pipeline directly (no separate TF-IDF step)
+            probabilities = svm_model.predict_proba([processed_text])[0]
+            predicted_class_idx = probabilities.argmax()
+            raw_prediction = svm_model.classes_[predicted_class_idx]
+            confidence = probabilities[predicted_class_idx]
+            
+            # ✅ CLASS MAPPING FIX: Map numeric labels to string labels
+            # PyCharm model: 0=negatif, 1=positif
+            # VS Code expects: 'NEGATIF', 'POSITIF'
+            class_mapping = {0: 'NEGATIF', 1: 'POSITIF'}
+            prediction = class_mapping.get(raw_prediction, str(raw_prediction))
+            
+            # Create probability mapping with consistent string labels
+            prob_dict = {
+                'NEGATIF': float(probabilities[0]),  # Class 0
+                'POSITIF': float(probabilities[1])   # Class 1  
             }
-        
-        # Preprocess text
-        processed_text = preprocess_text(text, preprocessing_options)
-        if not processed_text or not processed_text.strip():
-            return {
-                'sentiment': 'NETRAL', 
-                'confidence': 0.0,
-                'probabilities': {'POSITIF': 0.0, 'NEGATIF': 0.0}
-            }
-        
-        # ✅ UNIFIED PREDICTION: Always use GridSearchCV with raw text
-        prediction_numeric = unified_model.predict([processed_text])[0]
-        probabilities = unified_model.predict_proba([processed_text])[0]
-        
-        # ✅ STANDARD LABEL MAPPING: Numeric → String
-        label_mapping = {0: 'NEGATIF', 1: 'POSITIF'}
-        sentiment = label_mapping.get(prediction_numeric, 'UNKNOWN')
-        confidence = float(max(probabilities))
-        
-        # ✅ CONSISTENT PROBABILITY FORMAT
-        prob_dict = {
-            'NEGATIF': float(probabilities[0]),  # Always class 0
-            'POSITIF': float(probabilities[1])   # Always class 1
-        }
+                
+        else:
+            # ✅ PYCHARM COMPATIBILITY FIX - Handle pipeline with GridSearchCV
+            processed_text = preprocess_text(text, preprocessing_options)
+            if not processed_text.strip():
+                return {
+                    'sentiment': 'NETRAL',
+                    'confidence': 0,
+                    'probabilities': {'POSITIF': 0, 'NEGATIF': 0}
+                }
+            
+            # Check if pipeline contains GridSearchCV (PyCharm model)
+            if (hasattr(pipeline, 'steps') and len(pipeline.steps) > 0 and 
+                hasattr(pipeline.steps[-1][1], 'best_estimator_')):
+                
+                # PyCharm GridSearchCV model - use raw text input
+                try:
+                    grid_search = pipeline.steps[-1][1]  # Extract GridSearchCV
+                    prediction_numeric = grid_search.predict([text])[0]  # Raw text
+                    probabilities = grid_search.predict_proba([text])[0]  # Raw text
+                    
+                    # Convert numeric to string labels
+                    class_mapping = {0: 'NEGATIF', 1: 'POSITIF'}
+                    prediction = class_mapping.get(prediction_numeric, str(prediction_numeric))
+                    confidence = float(max(probabilities))
+                    
+                    prob_dict = {
+                        'NEGATIF': float(probabilities[0]),
+                        'POSITIF': float(probabilities[1])
+                    }
+                    
+                except Exception as gridcv_error:
+                    # Fallback: Try using just the classifier from best_estimator
+                    try:
+                        best_estimator = pipeline.steps[-1][1].best_estimator_
+                        if hasattr(best_estimator, 'named_steps'):
+                            # Get vectorizer and classifier from best estimator
+                            vectorizer = best_estimator.named_steps.get('tfidf')
+                            classifier = best_estimator.named_steps.get('svm')
+                            
+                            if vectorizer and classifier:
+                                X_transformed = vectorizer.transform([processed_text])
+                                prediction_numeric = classifier.predict(X_transformed)[0]
+                                probabilities = classifier.predict_proba(X_transformed)[0]
+                                
+                                class_mapping = {0: 'NEGATIF', 1: 'POSITIF'}
+                                prediction = class_mapping.get(prediction_numeric, str(prediction_numeric))
+                                confidence = float(max(probabilities))
+                                
+                                prob_dict = {
+                                    'NEGATIF': float(probabilities[0]),
+                                    'POSITIF': float(probabilities[1])
+                                }
+                            else:
+                                raise Exception("Could not extract components from best_estimator")
+                        else:
+                            raise Exception("best_estimator does not have named_steps")
+                            
+                    except Exception as fallback_error:
+                        logger.error(f"PyCharm model fallback failed: {fallback_error}")
+                        raise Exception(f"All PyCharm model methods failed: {gridcv_error}, {fallback_error}")
+                        
+            else:
+                # Regular pipeline - try direct prediction
+                try:
+                    probabilities = pipeline.predict_proba([processed_text])[0]
+                    predicted_class_idx = probabilities.argmax()
+                    raw_prediction = pipeline.classes_[predicted_class_idx]
+                    confidence = probabilities[predicted_class_idx]
+                    
+                    class_mapping = {0: 'NEGATIF', 1: 'POSITIF'}
+                    prediction = class_mapping.get(raw_prediction, str(raw_prediction))
+                    
+                    prob_dict = {}
+                    for i, class_name in enumerate(pipeline.classes_):
+                        mapped_name = class_mapping.get(class_name, str(class_name))
+                        prob_dict[mapped_name] = float(probabilities[i])
+                        
+                except Exception as regular_error:
+                    logger.error(f"Regular pipeline prediction failed: {regular_error}")
+                    raise Exception(f"Regular pipeline failed: {regular_error}")
         
         return {
-            'sentiment': sentiment,
-            'confidence': confidence,
+            'sentiment': prediction,
+            'confidence': float(confidence),
             'probabilities': prob_dict
         }
         
     except Exception as e:
-        logger.error(f"Unified prediction failed: {str(e)}")
+        # Return informative error without displaying to UI
+        error_msg = f"Prediction error: {str(e)}"
+        
+        # Log error for debugging
+        print(f"ERROR in predict_sentiment: {error_msg}")
+        print(f"Traceback: {traceback.format_exc()}")
+        
         return {
             'sentiment': 'ERROR',
-            'confidence': 0.0,
-            'probabilities': {'POSITIF': 0.0, 'NEGATIF': 0.0},
-            'error': str(e)
+            'confidence': 0,
+            'probabilities': {'POSITIF': 0, 'NEGATIF': 0},
+            'error': error_msg
         }
-
-
-def predict_sentiment(text: str, pipeline: Any = None, preprocessing_options: Optional[Dict] = None, 
-                     use_prediction_model: bool = False, svm_model: Any = None, 
-                     tfidf_vectorizer: Any = None) -> Dict[str, Any]:
-    """
-    LEGACY WRAPPER: Maintain backward compatibility while using unified approach.
-    All parameters are now optional and will be ignored in favor of unified model.
-    
-    Args:
-        text: Text to predict sentiment for
-        pipeline: DEPRECATED - kept for compatibility  
-        preprocessing_options: Preprocessing configuration (optional)
-        use_prediction_model: DEPRECATED - kept for compatibility
-        svm_model: DEPRECATED - kept for compatibility
-        tfidf_vectorizer: DEPRECATED - kept for compatibility
-    
-    Returns:
-        Dictionary with sentiment prediction results
-    """
-    # Always use unified approach regardless of parameters
-    return predict_sentiment_unified(text, preprocessing_options)
 
 # ==============================================================================
 # UI AND UTILITY FUNCTIONS

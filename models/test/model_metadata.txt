@@ -1,5 +1,5 @@
 sklearn_version: 1.5.0
-model_saved_at: 2025-08-21T22:14:40.672194
+model_saved_at: 2025-07-29T23:19:55.519340
 model_type: SVM with TF-IDF and SMOTE
 pipeline_type: ImbPipeline
 imbalanced_handling: SMOTE

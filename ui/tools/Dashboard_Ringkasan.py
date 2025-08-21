@@ -152,7 +152,7 @@ def safe_create_wordcloud(text: str, max_words: int = 100, max_length: int = 100
     
     Args:
         text: Input text for wordcloud generation
-        max_words: Maximum number of words in wordcloud
+        max_words: Maximum number of words in wordcloud (default: 150 for optimal display)
         max_length: Maximum text length to process
         timeout_seconds: Timeout limit for generation
         
@@ -168,7 +168,6 @@ def safe_create_wordcloud(text: str, max_words: int = 100, max_length: int = 100
         except Exception:
             return None
     if len(text) > max_length:
-        st.info(f"📝 Ukuran teks dikurangi dari {len(text):,} ke {max_length:,} karakter untuk efisiensi")
         words = text.split()
         take = min(max_length // 10, len(words))
         sampled_words = random.sample(words, take) if take > 0 else words[: max_length // 10]
@@ -1168,6 +1167,14 @@ def render_word_analysis_tab(topic_data: pd.DataFrame, tfidf_vectorizer):
     """Render the word analysis tab."""
     
     st.markdown("### 📝 Analisis Kata Kunci dan Topik")
+    st.markdown("*Jelajahi pola kata dan tema utama dari ulasan dengan visualisasi yang informatif*")
+    
+    # ==========================================
+    # 1. WORDCLOUD ANALYSIS SECTION
+    # ==========================================
+    
+    st.markdown("---")
+    st.markdown("## ☁️ Visualisasi Word Cloud")
     
     col1, col2 = st.columns(2)
     
@@ -1193,14 +1200,13 @@ def render_word_analysis_tab(topic_data: pd.DataFrame, tfidf_vectorizer):
                             st.image(pos_wordcloud.to_array(), caption="Wordcloud Positif", use_container_width=True)
                     else:
                         st.warning("⚠️ Tidak dapat membuat word cloud untuk ulasan positif")
-            
-            # TF-IDF analysis for positive reviews
-            render_tfidf_analysis(positive_reviews, tfidf_vectorizer, "Positif", "Greens")
+            else:
+                st.info("📝 Tidak ada teks yang cukup untuk membuat wordcloud positif")
         else:
             st.info("😔 Tidak ada ulasan positif dalam data yang dipilih")
     
     with col2:
-        st.markdown("#### 😞 Wordcloud Ulasan Negatif")
+        st.markdown("#### 😞 Wordcloud - Ulasan Negatif")
         negative_reviews = topic_data[topic_data['sentiment'] == 'NEGATIF']
         
         if not negative_reviews.empty:
@@ -1221,15 +1227,37 @@ def render_word_analysis_tab(topic_data: pd.DataFrame, tfidf_vectorizer):
                             st.image(neg_wordcloud.to_array(), caption="Wordcloud Negatif", use_container_width=True)
                     else:
                         st.warning("⚠️ Tidak dapat membuat word cloud untuk ulasan negatif")
-            
-            # TF-IDF analysis for negative reviews
-            render_tfidf_analysis(negative_reviews, tfidf_vectorizer, "Negatif", "Reds")
+            else:
+                st.info("📝 Tidak ada teks yang cukup untuk membuat wordcloud negatif")
         else:
             st.info("😊 Tidak ada ulasan negatif dalam data yang dipilih")
     
-    # Bigram analysis
+    # ==========================================
+    # 2. TF-IDF KEYWORD ANALYSIS SECTION
+    # ==========================================
+    
     st.markdown("---")
-    st.markdown("#### 🔍 Analisis Frasa (Bigram)")
+    st.markdown("## 🔍 Analisis Kata Kunci Berbobot (TF-IDF)")
+    st.markdown("*Kata-kata paling relevan dan bermakna berdasarkan algoritma TF-IDF*")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # TF-IDF analysis for positive reviews
+        render_tfidf_analysis(positive_reviews, tfidf_vectorizer, "Positif", "Greens")
+        
+    with col2:
+        # TF-IDF analysis for negative reviews  
+        render_tfidf_analysis(negative_reviews, tfidf_vectorizer, "Negatif", "Reds")
+    
+    # ==========================================
+    # 3. BIGRAM PHRASE ANALYSIS SECTION
+    # ==========================================
+    
+    st.markdown("---")
+    st.markdown("## � Analisis Frasa (Bigram)")
+    st.markdown("*Pasangan kata yang sering muncul bersamaan dalam ulasan*")
+    
     try:
         all_text = " ".join(topic_data['teks_preprocessing'].dropna())
         if all_text.strip():
@@ -1238,30 +1266,41 @@ def render_word_analysis_tab(topic_data: pd.DataFrame, tfidf_vectorizer):
                 bigrams_df = pd.DataFrame(list(bigrams.items()), columns=['Frasa', 'Frekuensi'])
                 bigrams_df = bigrams_df.sort_values('Frekuensi', ascending=True)
                 
+                # Create enhanced bigram visualization
                 fig = px.bar(
                     bigrams_df.tail(10), 
                     x='Frekuensi', 
                     y='Frasa', 
                     orientation='h',
-                    title="Top 10 Frasa yang Paling Sering Muncul",
+                    title="🔟 Top 10 Frasa yang Paling Sering Muncul",
                     color='Frekuensi',
                     color_continuous_scale='Viridis',
                     text='Frekuensi'
                 )
                 fig.update_traces(texttemplate='%{text}', textposition='outside')
-                fig.update_layout(height=500, yaxis={'categoryorder':'total ascending'})
+                fig.update_layout(
+                    height=500, 
+                    yaxis={'categoryorder':'total ascending'},
+                    showlegend=False
+                )
                 st.plotly_chart(fig, use_container_width=True)
+                
+                # Summary information
+                st.info(f"📈 Ditemukan {len(bigrams)} frasa unik. Menampilkan 10 frasa teratas berdasarkan frekuensi kemunculan.")
+                
             else:
-                st.info("📝 Tidak ditemukan frasa yang signifikan")
+                st.info("📝 Tidak ditemukan frasa yang signifikan dalam data")
         else:
             st.warning("⚠️ Tidak ada teks yang dapat dianalisis untuk bigram")
     except Exception as e:
         st.error(f"❌ Error dalam analisis bigram: {str(e)}")
+        st.info("💡 Coba sesuaikan filter data untuk mendapatkan hasil yang lebih baik.")
 
 def render_tfidf_analysis(reviews: pd.DataFrame, tfidf_vectorizer, sentiment_label: str, color_scale: str):
     """Render TF-IDF analysis for sentiment-specific reviews."""
     
-    st.markdown(f"##### 📊 Kata Kunci Berdasarkan TF-IDF - {sentiment_label}")
+    st.markdown(f"#### 📊 Kata Kunci TF-IDF - {sentiment_label}")
+    
     try:
         feature_names = np.array(tfidf_vectorizer.get_feature_names_out())
         samples = reviews['teks_preprocessing'].dropna()
@@ -1295,18 +1334,27 @@ def render_tfidf_analysis(reviews: pd.DataFrame, tfidf_vectorizer, sentiment_lab
                     x='Skor TF-IDF', 
                     y='Kata', 
                     orientation='h',
-                    title=f"Top 10 Kata Kunci {sentiment_label}",
+                    title=f"🔟 Top 10 Kata Kunci {sentiment_label}",
                     color='Skor TF-IDF',
                     color_continuous_scale=color_scale
                 )
-                fig.update_layout(height=400, yaxis={'categoryorder':'total ascending'})
+                fig.update_layout(
+                    height=400, 
+                    yaxis={'categoryorder':'total ascending'},
+                    showlegend=False
+                )
                 st.plotly_chart(fig, use_container_width=True)
+                
+                # Summary info
+                st.caption(f"📈 Menampilkan kata-kata paling relevan untuk ulasan {sentiment_label.lower()}")
+                
             else:
-                st.info("📝 Tidak ada kata kunci yang memenuhi kriteria (1 kata, >=3 huruf)")
+                st.info("📝 Tidak ada kata kunci yang memenuhi kriteria (1 kata, ≥3 huruf)")
         else:
             st.info("📝 Tidak ada teks terproses untuk analisis TF-IDF")
     except Exception as e:
         st.error(f"❌ Error dalam analisis TF-IDF {sentiment_label}: {str(e)}")
+        st.info("💡 Pastikan data preprocessing telah selesai dilakukan.")
 
 def render_insights_tab(topic_data: pd.DataFrame):
     """Render the insights and recommendations tab dengan analisis aspek bermakna."""

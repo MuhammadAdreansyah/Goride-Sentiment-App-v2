@@ -48,6 +48,7 @@ from utils import (
 # Caching ringan untuk menghindari model retrain & data reload tiap interaksi UI
 @st.cache_resource(show_spinner=False)
 def _cached_model_and_metrics():
+    """Load model and metrics with PyCharm compatibility fixes."""
     data = load_sample_data()
     preprocessing_options = DEFAULT_PREPROCESSING_OPTIONS.copy()
     pipeline, accuracy, precision, recall, f1, *_ = get_or_train_model(data, preprocessing_options)
@@ -599,9 +600,9 @@ def render_results_table_tab(df: pd.DataFrame) -> None:
 
 
 def render_wordcloud_tab(df: pd.DataFrame) -> None:
-    """Render dual word clouds (positive vs negative) with improved error handling."""
+    """Render dual word clouds (positive vs negative) with clean configuration and improved error handling."""
     st.subheader("☁️ Word Cloud Per Sentimen")
-    st.caption("Perbandingan kata dominan antara ulasan POSITIF dan NEGATIF.")
+    st.info("Visualisasi kata dominan yang membedakan ulasan POSITIF dan NEGATIF untuk insights yang lebih mendalam.")
 
     if df is None or df.empty:
         st.warning("⚠️ Data tidak tersedia untuk membuat word cloud.")
@@ -617,16 +618,34 @@ def render_wordcloud_tab(df: pd.DataFrame) -> None:
         st.error("❌ Tidak ada kolom teks yang dapat digunakan.")
         return
 
-    # Konfigurasi wordcloud dengan keys unik
-    col_cfg1, col_cfg2, col_cfg3, col_cfg4 = st.columns(4)
-    with col_cfg1:
-        max_words = st.slider("Max Kata", 50, 300, 120, step=10, key="wordcloud_max_words")
-    with col_cfg2:
-        background_color = st.selectbox("Latar Belakang", ["white", "black", "lightgray"], index=0, key="wordcloud_bg")
-    with col_cfg3:
-        cmap_pos = st.selectbox("Skema Positif", WORDCLOUD_COLOR_SCHEMES, index=0, key="wordcloud_cmap_pos")
-    with col_cfg4:
-        cmap_neg = st.selectbox("Skema Negatif", WORDCLOUD_COLOR_SCHEMES, index=3, key="wordcloud_cmap_neg")
+    # Konfigurasi wordcloud dalam expander (collapsed by default)
+    with st.expander("🔧 Pengaturan Word Cloud", expanded=False):
+        st.markdown("**Sesuaikan parameter word cloud untuk hasil visualisasi optimal:**")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            max_words = st.slider(
+                "Jumlah Kata Maksimal", 50, 500, 150, step=25, 
+                key="wordcloud_max_words",
+                help="Menentukan berapa banyak kata yang akan ditampilkan (150 kata optimal untuk keseimbangan detail dan readability)"
+            )
+            background_color = st.selectbox(
+                "Warna Latar Belakang", ["white", "black", "lightgray"], index=0, 
+                key="wordcloud_bg",
+                help="Pilih warna latar belakang yang kontras dengan skema warna"
+            )
+        
+        with col2:
+            cmap_pos = st.selectbox(
+                "Skema Warna Positif", WORDCLOUD_COLOR_SCHEMES, index=0, 
+                key="wordcloud_cmap_pos",
+                help="Skema warna untuk word cloud ulasan positif"
+            )
+            cmap_neg = st.selectbox(
+                "Skema Warna Negatif", WORDCLOUD_COLOR_SCHEMES, index=3, 
+                key="wordcloud_cmap_neg",
+                help="Skema warna untuk word cloud ulasan negatif"
+            )
 
     # Siapkan data dengan error handling
     try:
@@ -646,68 +665,96 @@ def render_wordcloud_tab(df: pd.DataFrame) -> None:
         unique_words = {t.strip() for t in text.split() if t.strip() and len(t.strip()) > 1}
         return len(unique_words) >= min_unique
 
+    # Layout wordcloud yang lebih bersih
+    st.markdown("---")
+    st.markdown("### 📊 Visualisasi Word Cloud")
+    
     col_pos, col_neg = st.columns(2)
     any_generated = False
     
     # Wordcloud Positif
     with col_pos:
-        st.markdown("### 😊 Positif")
+        st.markdown("#### 😊 Sentimen Positif")
         if sufficient(pos_text):
             try:
-                with st.spinner("Membuat wordcloud positif..."):
+                with st.spinner("🎨 Membuat word cloud positif..."):
                     wc_pos = create_wordcloud(pos_text, max_words=max_words, background_color=background_color, colormap=cmap_pos)
                     if wc_pos is not None:
-                        st.image(wc_pos.to_array(), use_column_width=True)
+                        st.image(wc_pos.to_array(), use_container_width=True, caption="Word Cloud kata-kata dominan dalam ulasan positif")
                         any_generated = True
+                        
+                        # Tampilkan kata tersering dengan styling yang lebih baik
                         if hasattr(wc_pos, 'words_') and wc_pos.words_:
                             top_pos = max(wc_pos.words_.items(), key=lambda x: x[1])[0]
-                            st.caption(f"Kata tersering: {top_pos}")
+                            st.success(f"🏆 **Kata tersering:** {top_pos}")
                     else:
-                        st.info("Tidak dapat membentuk word cloud positif.")
+                        st.info("⚠️ Tidak dapat membentuk word cloud positif dengan parameter saat ini")
             except Exception as e:
                 st.error(f"❌ Error membuat wordcloud positif: {str(e)}")
-                st.info("Coba ubah pengaturan atau periksa kualitas data.")
+                st.info("💡 **Saran:** Coba ubah pengaturan atau periksa kualitas data preprocessing")
         else:
-            st.info(f"Data positif belum cukup (kata unik < 5). Data tersedia: {len(pos_series)} ulasan")
+            st.warning(f"📝 **Data positif belum mencukupi** untuk word cloud\n\n" +
+                      f"• Kata unik tersedia: < 5\n" +
+                      f"• Ulasan positif: {len(pos_series):,}\n" +
+                      f"• **Solusi:** Perbesar dataset atau kurangi preprocessing")
     
-    # Wordcloud Negatif
+    # Wordcloud Negatif  
     with col_neg:
-        st.markdown("### 😞 Negatif")
+        st.markdown("#### 😞 Sentimen Negatif")
         if sufficient(neg_text):
             try:
-                with st.spinner("Membuat wordcloud negatif..."):
+                with st.spinner("🎨 Membuat word cloud negatif..."):
                     wc_neg = create_wordcloud(neg_text, max_words=max_words, background_color=background_color, colormap=cmap_neg)
                     if wc_neg is not None:
-                        st.image(wc_neg.to_array(), use_column_width=True)
+                        st.image(wc_neg.to_array(), use_container_width=True, caption="Word Cloud kata-kata dominan dalam ulasan negatif")
                         any_generated = True
+                        
+                        # Tampilkan kata tersering dengan styling yang lebih baik
                         if hasattr(wc_neg, 'words_') and wc_neg.words_:
                             top_neg = max(wc_neg.words_.items(), key=lambda x: x[1])[0]
-                            st.caption(f"Kata tersering: {top_neg}")
+                            st.error(f"⚠️ **Kata tersering:** {top_neg}")
                     else:
-                        st.info("Tidak dapat membentuk word cloud negatif.")
+                        st.info("⚠️ Tidak dapat membentuk word cloud negatif dengan parameter saat ini")
             except Exception as e:
                 st.error(f"❌ Error membuat wordcloud negatif: {str(e)}")
-                st.info("Coba ubah pengaturan atau periksa kualitas data.")
+                st.info("💡 **Saran:** Coba ubah pengaturan atau periksa kualitas data preprocessing")
         else:
-            st.info(f"Data negatif belum cukup (kata unik < 5). Data tersedia: {len(neg_series)} ulasan")
+            st.warning(f"📝 **Data negatif belum mencukupi** untuk word cloud\n\n" +
+                      f"• Kata unik tersedia: < 5\n" +
+                      f"• Ulasan negatif: {len(neg_series):,}\n" +
+                      f"• **Solusi:** Perbesar dataset atau kurangi preprocessing")
 
-    # Statistik
-    st.markdown("---")
-    col_m1, col_m2, col_m3 = st.columns(3)
-    with col_m1:
-        st.metric("Ulasan Positif", f"{len(pos_series):,}")
-    with col_m2:
-        st.metric("Ulasan Negatif", f"{len(neg_series):,}")
-    with col_m3:
-        try:
-            vocab_union = len({*pos_text.split(), *neg_text.split()}) if (pos_text or neg_text) else 0
-            st.metric("Total Vokab Unik Gabungan", f"{vocab_union:,}")
-        except Exception:
-            st.metric("Total Vokab Unik Gabungan", "N/A")
-
+    # Status dan tips (hanya jika tidak ada word cloud yang berhasil)
     if not any_generated:
-        st.warning("⚠️ Word cloud belum dapat ditampilkan. Pastikan data memiliki cukup variasi kata atau ubah preprocessing.")
-    st.caption("💡 Word cloud ditampilkan jika tiap kategori memiliki ≥5 kata unik. Pastikan preprocessing menghasilkan teks yang bervariasi.")
+        st.markdown("---")
+        st.warning("⚠️ **Tidak ada word cloud yang dapat ditampilkan**")
+        with st.expander("💡 Tips untuk Mengoptimalkan Word Cloud", expanded=True):
+            st.markdown("""
+            **Kemungkinan penyebab dan solusi:**
+            
+            1. **Data terlalu sedikit:** 
+               - Perluas rentang tanggal filter
+               - Kurangi intensitas preprocessing
+            
+            2. **Preprocessing terlalu agresif:**
+               - Nonaktifkan beberapa opsi preprocessing
+               - Cek kualitas teks hasil preprocessing
+            
+            3. **Pengaturan word cloud:**
+               - Kurangi jumlah kata minimal (saat ini: {max_words})
+               - Coba skema warna yang berbeda
+               
+            4. **Kualitas data:**
+               - Pastikan kolom teks berisi data bermakna
+               - Periksa hasil preprocessing di tab lain
+            """)
+        
+    # Footer informasi teknis yang sederhana
+    st.divider()
+    st.caption("""
+    💡 **Catatan:** Word cloud menampilkan {max_words} kata teratas dengan minimal 5 kata unik per kategori. 
+    Top 10 kata tersering diurutkan berdasarkan frekuensi kemunculan dalam word cloud.
+    """.format(max_words=max_words))
 
 
 ## Fungsi ringkasan teks manual dihapus – digantikan oleh tab Insights & analisis aspek.
@@ -982,60 +1029,37 @@ def render_insights_recommendations_tab(df: pd.DataFrame) -> None:
 
 
 def render_word_analysis_tab(df: pd.DataFrame, preprocessed_text: str) -> None:
-    """Unified word analysis (frequency + N-gram) mirroring best pattern from dashboard summary (tanpa wordcloud)."""
+    """Unified word analysis (frequency + N-gram) dengan tampilan visual yang bersih dan terstruktur."""
 
     st.subheader("📝 Analisis Kata & Frasa")
-    st.markdown(
-        """
-        *Temukan kata paling sering muncul dan kombinasi kata (N-Gram) untuk memahami pola umum dalam ulasan.*
-        - Mode default menampilkan ringkasan frekuensi kata.
-        - Aktifkan segmentasi per sentimen untuk membandingkan kata dominan antara ulasan positif dan negatif.
-        - Bagian N-Gram tersedia di bawah dengan opsi pengaturan tambahan.
-        """
-    )
+    st.info("Temukan kata paling sering muncul dan kombinasi kata (N-Gram) untuk memahami pola umum dalam ulasan.")
 
     if not preprocessed_text or not preprocessed_text.strip():
         st.warning("⚠️ Tidak ada teks yang tersedia untuk dianalisis.")
         return
 
     # =============================
-    # 1. PENGATURAN UTAMA (Ringkas)
+    # 1. KONTROL UTAMA
     # =============================
-    col_main1, col_main2, col_main3 = st.columns([1, 1, 1])
-    with col_main1:
+    st.markdown("#### ⚙️ Pengaturan Analisis")
+    
+    col1, col2 = st.columns(2)
+    with col1:
         top_n_words = st.slider(
-            "Top Kata:", 5, 50, 10, step=5,
+            "Jumlah Kata Teratas", 5, 30, 15, step=5,
             key="word_analysis_top_n",
-            help="Jumlah kata teratas yang akan divisualisasikan"
+            help="Tentukan berapa banyak kata teratas yang akan ditampilkan"
         )
-    with col_main2:
+        
+    with col2:
         segment_mode = st.selectbox(
-            "Mode Frekuensi:", ["Gabungan", "Per Sentimen"], index=0,
+            "Mode Analisis", ["Gabungan", "Per Sentimen"], index=0,
             key="word_analysis_segment_mode",
-            help="Pilih 'Per Sentimen' untuk melihat perbandingan POSITIF vs NEGATIF"
-        )
-    with col_main3:
-        orientation = st.radio(
-            "Orientasi Bar:", ["Horizontal", "Vertikal"], index=0,
-            key="word_analysis_orientation",
-            help="Ubah orientasi tampilan chart kata"
+            help="Pilih 'Per Sentimen' untuk perbandingan kata positif vs negatif"
         )
 
-    with st.expander("⚙️ Pengaturan Tambahan (Opsional)"):
-        st.markdown("Gunakan pengaturan lanjutan di bawah ini jika diperlukan penyesuaian presentasi.")
-        col_adv1, col_adv2 = st.columns(2)
-        with col_adv1:
-            min_token_len = st.number_input(
-                "Minimal panjang token ikut dihitung", min_value=1, max_value=5, value=2, step=1,
-                key="word_analysis_min_token_len",
-                help="Token lebih pendek dari nilai ini akan diabaikan dalam perhitungan frekuensi"
-            )
-        with col_adv2:
-            show_tables_expanded = st.checkbox(
-                "Buka tabel frekuensi secara default", value=False,
-                key="word_analysis_show_tables_expanded",
-                help="Jika aktif, tabel rincian langsung terbuka tanpa perlu diklik"
-            )
+    # Parameter internal yang disederhanakan
+    min_token_len = 2  # Fixed value untuk konsistensi
 
     # Helper to build frequency from tokenized texts
     def build_freq(series: pd.Series) -> Dict[str, int]:
@@ -1060,105 +1084,129 @@ def render_word_analysis_tab(df: pd.DataFrame, preprocessed_text: str) -> None:
     # =============================
     # 2. VISUALISASI FREKUENSI KATA
     # =============================
-    st.markdown("### 📊 Frekuensi Kata")
+    st.markdown("---")
+    st.markdown("#### 📊 Frekuensi Kata Dominan")
 
     if segment_mode == "Gabungan":
         if not overall_freq:
             st.info("📝 Tidak ada kata yang cukup untuk dianalisis.")
         else:
+            # Visualisasi gabungan dengan horizontal bar yang lebih clean
             top_items = list(overall_freq.items())[:top_n_words]
             freq_df = pd.DataFrame(top_items, columns=["Kata", "Frekuensi"])
-            if orientation == "Horizontal":
-                freq_df_plot = freq_df.sort_values('Frekuensi', ascending=True)
-                fig = px.bar(
-                    freq_df_plot,
-                    x='Frekuensi', y='Kata', orientation='h',
-                    title=f"Top {len(freq_df_plot)} Kata Teratas (Gabungan)",
-                    color='Frekuensi', color_continuous_scale='Viridis'
-                )
-            else:
-                fig = px.bar(
-                    freq_df.head(top_n_words),
-                    x='Kata', y='Frekuensi',
-                    title=f"Top {len(freq_df)} Kata Teratas (Gabungan)",
-                    color='Frekuensi', color_continuous_scale='Viridis'
-                )
-                fig.update_xaxes(tickangle=45)
-            fig.update_layout(height=500, showlegend=False)
+            freq_df_plot = freq_df.sort_values('Frekuensi', ascending=True)
+            
+            fig = px.bar(
+                freq_df_plot,
+                x='Frekuensi', y='Kata', orientation='h',
+                title=f"📈 {len(freq_df_plot)} Kata Paling Sering Muncul",
+                color='Frekuensi', 
+                color_continuous_scale='Viridis',
+                text='Frekuensi'
+            )
+            fig.update_layout(
+                height=500, 
+                showlegend=False,
+                xaxis_title="Jumlah Kemunculan",
+                yaxis_title="Kata",
+                title_x=0.5,
+                font=dict(size=12)
+            )
+            fig.update_traces(texttemplate='%{text}', textposition='outside')
             st.plotly_chart(fig, use_container_width=True)
-            coverage = (freq_df['Frekuensi'].sum() / max(sum(overall_freq.values()), 1)) * 100
-            colm1, colm2, colm3 = st.columns(3)
-            with colm1:
-                st.metric("Kata Ditampilkan", len(freq_df))
-            with colm2:
-                st.metric("Total Kata Unik", f"{len(overall_freq):,}")
-            with colm3:
-                st.metric("Cakupan Top Kata", f"{coverage:.1f}%")
-            with st.expander("📋 Tabel Frekuensi (Gabungan)", expanded=show_tables_expanded):
-                st.dataframe(freq_df, use_container_width=True, hide_index=True)
+            
+            # Metrics sederhana tanpa tabel
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("📝 Kata Ditampilkan", len(freq_df))
+            with col2:
+                st.metric("🔤 Total Kata Unik", f"{len(overall_freq):,}")
+            with col3:
+                coverage = (freq_df['Frekuensi'].sum() / max(sum(overall_freq.values()), 1)) * 100
+                st.metric("📊 Cakupan", f"{coverage:.1f}%")
+                
     else:
-        colA, colB = st.columns(2)
-        with colA:
-            st.markdown("**😊 Positif**")
+        # Mode perbandingan sentimen dengan layout yang lebih baik
+        col_pos, col_neg = st.columns(2)
+        
+        with col_pos:
+            st.markdown("##### 😊 Kata Dominan Positif")
             if not pos_freq:
-                st.info("Tidak ada data positif atau kolom sentimen tidak tersedia.")
+                st.info("Tidak ada data positif tersedia")
             else:
                 pos_items = list(pos_freq.items())[:top_n_words]
                 pos_df = pd.DataFrame(pos_items, columns=["Kata", "Frekuensi"])
                 pos_df_plot = pos_df.sort_values('Frekuensi', ascending=True)
+                
                 fig_pos = px.bar(
                     pos_df_plot,
                     x='Frekuensi', y='Kata', orientation='h',
-                    title=f"Top {len(pos_df_plot)} Kata Positif",
-                    color='Frekuensi', color_continuous_scale='Greens'
+                    color='Frekuensi', 
+                    color_continuous_scale='Greens',
+                    text='Frekuensi'
                 )
-                fig_pos.update_layout(height=500, showlegend=False)
+                fig_pos.update_layout(
+                    height=450, 
+                    showlegend=False,
+                    xaxis_title="Frekuensi",
+                    yaxis_title="",
+                    font=dict(size=10),
+                    margin=dict(l=0, r=0, t=30, b=0)
+                )
+                fig_pos.update_traces(texttemplate='%{text}', textposition='outside')
                 st.plotly_chart(fig_pos, use_container_width=True)
-                with st.expander("📋 Tabel Kata Positif", expanded=show_tables_expanded):
-                    st.dataframe(pos_df, use_container_width=True, hide_index=True)
-        with colB:
-            st.markdown("**😞 Negatif**")
+                
+                st.metric("📊 Kata Positif", len(pos_df))
+        
+        with col_neg:
+            st.markdown("##### 😞 Kata Dominan Negatif")
             if not neg_freq:
-                st.info("Tidak ada data negatif atau kolom sentimen tidak tersedia.")
+                st.info("Tidak ada data negatif tersedia")
             else:
                 neg_items = list(neg_freq.items())[:top_n_words]
                 neg_df = pd.DataFrame(neg_items, columns=["Kata", "Frekuensi"])
                 neg_df_plot = neg_df.sort_values('Frekuensi', ascending=True)
+                
                 fig_neg = px.bar(
                     neg_df_plot,
                     x='Frekuensi', y='Kata', orientation='h',
-                    title=f"Top {len(neg_df_plot)} Kata Negatif",
-                    color='Frekuensi', color_continuous_scale='Reds'
+                    color='Frekuensi', 
+                    color_continuous_scale='Reds',
+                    text='Frekuensi'
                 )
-                fig_neg.update_layout(height=500, showlegend=False)
+                fig_neg.update_layout(
+                    height=450, 
+                    showlegend=False,
+                    xaxis_title="Frekuensi",
+                    yaxis_title="",
+                    font=dict(size=10),
+                    margin=dict(l=0, r=0, t=30, b=0)
+                )
+                fig_neg.update_traces(texttemplate='%{text}', textposition='outside')
                 st.plotly_chart(fig_neg, use_container_width=True)
-                with st.expander("📋 Tabel Kata Negatif", expanded=show_tables_expanded):
-                    st.dataframe(neg_df, use_container_width=True, hide_index=True)
+                
+                st.metric("📊 Kata Negatif", len(neg_df))
 
     # =============================
     # 3. ANALISIS N-GRAM
     # =============================
     st.markdown("---")
-    st.markdown("### 🔄 Analisis N-Gram")
-    st.caption("N-Gram membantu menemukan frasa umum yang muncul bersama dan mengungkap konteks lebih spesifik.")
-
-    with st.expander("⚙️ Pengaturan N-Gram", expanded=False):
-        col_ng1, col_ng2, col_ng3 = st.columns(3)
-        with col_ng1:
-            ngram_type = st.radio("Tipe N-Gram:", ["Bigram", "Trigram"], horizontal=True, key="word_analysis_ngram_type")
-        with col_ng2:
-            top_n_ngrams = st.slider("Top N-Gram:", 5, 30, 10, step=5, key="word_analysis_top_n_ngrams")
-        with col_ng3:
-            ngram_scope = st.selectbox(
-                "Subset Data:", ["Gabungan", "Hanya Positif", "Hanya Negatif"], index=0,
-                key="word_analysis_ngram_scope",
-                help="Pilih subset data untuk dihitung N-Gram"
-            )
-    # Defaults if expander collapsed
-    if 'ngram_type' not in locals():
-        ngram_type = "Bigram"
-        top_n_ngrams = 10
-        ngram_scope = "Gabungan"
+    st.markdown("#### 🔄 Analisis Frasa (N-Gram)")
+    
+    # Pengaturan N-Gram yang disederhanakan
+    col1, col2 = st.columns(2)
+    with col1:
+        ngram_type = st.radio(
+            "Jenis Frasa", ["Bigram (2 Kata)", "Trigram (3 Kata)"], 
+            horizontal=True, key="word_analysis_ngram_type",
+            help="Bigram: kombinasi 2 kata, Trigram: kombinasi 3 kata"
+        )
+    with col2:
+        ngram_scope = st.selectbox(
+            "Data yang Dianalisis", ["Gabungan", "Hanya Positif", "Hanya Negatif"], 
+            index=0, key="word_analysis_ngram_scope",
+            help="Pilih subset data untuk analisis N-Gram"
+        )
 
     # Tentukan korpus untuk N-gram
     if 'teks_preprocessing' in df.columns:
@@ -1171,29 +1219,53 @@ def render_word_analysis_tab(df: pd.DataFrame, preprocessed_text: str) -> None:
     else:
         corpus_text = preprocessed_text
 
-    n_val = 2 if ngram_type == "Bigram" else 3
-    ngram_data = get_ngrams(corpus_text, n_val, top_n=top_n_ngrams)
+    # Generate N-gram dengan jumlah tetap untuk konsistensi visual
+    n_val = 2 if "Bigram" in ngram_type else 3
+    ngram_data = get_ngrams(corpus_text, n_val, top_n=12)
 
     if ngram_data:
-        ngram_df = pd.DataFrame(list(ngram_data.items()), columns=['N-Gram', 'Frekuensi'])
+        ngram_df = pd.DataFrame(list(ngram_data.items()), columns=['Frasa', 'Frekuensi'])
         ngram_df_plot = ngram_df.sort_values('Frekuensi', ascending=True)
+        
+        # Pilih color scheme berdasarkan scope
+        if ngram_scope == "Hanya Positif":
+            color_scheme = 'Greens'
+            title_icon = "😊"
+        elif ngram_scope == "Hanya Negatif":
+            color_scheme = 'Reds'
+            title_icon = "😞"
+        else:
+            color_scheme = 'Plasma'
+            title_icon = "🔄"
+        
         fig_ng = px.bar(
             ngram_df_plot,
-            x='Frekuensi', y='N-Gram', orientation='h',
-            title=f"Top {len(ngram_df_plot)} {ngram_type} Teratas ({ngram_scope})",
-            color='Frekuensi', color_continuous_scale='Plasma'
+            x='Frekuensi', y='Frasa', orientation='h',
+            title=f"{title_icon} {len(ngram_df_plot)} Frasa {ngram_type.split()[0]} Teratas",
+            color='Frekuensi', 
+            color_continuous_scale=color_scheme,
+            text='Frekuensi'
         )
-        fig_ng.update_layout(height=600, showlegend=False)
+        fig_ng.update_layout(
+            height=550, 
+            showlegend=False,
+            xaxis_title="Jumlah Kemunculan",
+            yaxis_title="Frasa",
+            title_x=0.5,
+            font=dict(size=11)
+        )
+        fig_ng.update_traces(texttemplate='%{text}', textposition='outside')
         st.plotly_chart(fig_ng, use_container_width=True)
-        with st.expander("📋 Tabel N-Gram"):
-            st.dataframe(ngram_df, use_container_width=True, hide_index=True)
+        
+        # Simple metric untuk N-gram
+        st.metric("🎯 Frasa Unik Ditemukan", f"{len(ngram_data):,}")
+        
     else:
-        st.info("📝 Tidak cukup data untuk membentuk N-Gram pada subset yang dipilih.")
+        st.info(f"📝 Tidak cukup data untuk membentuk {ngram_type.split()[0]} pada subset '{ngram_scope}'")
 
-    # =============================
-    # 4. CATATAN AKHIR
-    # =============================
-    st.caption("Kata & N-Gram dihitung dari teks hasil preprocessing (token < panjang minimum diabaikan). Word Cloud tersedia pada tab terpisah.")
+    # Footer info yang lebih clean
+    st.divider()
+    st.caption("💡 Analisis kata & frasa berdasarkan teks hasil preprocessing. Token dengan panjang < 2 karakter diabaikan untuk akurasi hasil.")
 
 # ==============================================================================
 # FOOTER FUNCTIONS  

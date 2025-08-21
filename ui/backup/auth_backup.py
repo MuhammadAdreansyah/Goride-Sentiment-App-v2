@@ -27,20 +27,59 @@ import firebase_admin
 import pyrebase
 from firebase_admin import credentials, auth, firestore
 from datetime import datetime, timedelta
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 from urllib.parse import urlencode
 from streamlit_cookies_controller import CookieController
 
-# Logging configuration
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('log/app.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+# Simplified logging configuration
+import sys
+from pathlib import Path
+
+class StreamlitAuthFormatter(logging.Formatter):
+    """Lightweight formatter optimized for auth module"""
+    
+    def format(self, record):
+        # Simple emoji-based formatting
+        emoji_map = {'INFO': '✅', 'WARNING': '⚠️', 'ERROR': '❌', 'CRITICAL': '🚨', 'DEBUG': '🔍'}
+        emoji = emoji_map.get(record.levelname, 'ℹ️')
+        timestamp = self.formatTime(record, '%H:%M:%S')
+        
+        if record.levelname in ['ERROR', 'CRITICAL']:
+            return f"{emoji} [{timestamp}] {record.levelname} | {record.funcName}() | {record.getMessage()}"
+        else:
+            return f"{emoji} [{timestamp}] {record.getMessage()}"
+
+def setup_auth_logger():
+    """Setup optimized logger for auth module"""
+    logger = logging.getLogger('auth_module')
+    logger.setLevel(logging.INFO)
+    
+    # Clear existing handlers
+    logger.handlers.clear()
+    
+    # Ensure log directory exists
+    Path('log').mkdir(exist_ok=True)
+    
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(StreamlitAuthFormatter())
+    
+    # File handler
+    file_handler = logging.FileHandler('log/auth.log', encoding='utf-8')
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s | %(levelname)s | %(funcName)s | %(message)s'
+    ))
+    
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+    logger.propagate = False
+    
+    return logger
+
+# Initialize logger
+logger = setup_auth_logger()
 
 # Configuration constants
 SESSION_TIMEOUT = 3600  # 1 hour
@@ -50,27 +89,154 @@ EMAIL_VERIFICATION_LIMIT = 50  # per hour
 REMEMBER_ME_DURATION = 30 * 24 * 60 * 60  # 30 days
 LAST_EMAIL_DURATION = 90 * 24 * 60 * 60  # 90 days
 
+# UI/UX timing constants
+SUCCESS_DISPLAY_DURATION = 1.2  # seconds to show success messages
+REDIRECT_PAUSE_DURATION = 0.5   # seconds before redirect
+PROGRESS_ANIMATION_DELAY = 0.02  # seconds between progress steps
+
 # Initialize cookie controller
 cookie_controller = CookieController()
+
+# =============================================================================
+# UNIFIED LOGGING SYSTEM
+# =============================================================================
+
+def log_event(category: str, operation: str, level: str = "info", email: str = "", details: str = "", error: Optional[Exception] = None) -> None:
+    """Unified logging system for all auth operations
+    
+    Args:
+        category: Type of operation (auth, security, system, firebase, user, session, config)
+        operation: Description of the operation
+        level: Log level (info, success, warning, error, critical)
+        email: User email (optional)
+        details: Additional details (optional)
+        error: Exception object for error logging (optional)
+    """
+    # Category icons and prefixes
+    icons = {
+        "auth": "🔐", "security": "🔒", "system": "⚙️", 
+        "firebase": "🔥", "user": "👤", "session": "🔐", "config": "🔧"
+    }
+    
+    # Level icons
+    level_icons = {
+        "info": "ℹ️", "success": "✅", "warning": "⚠️", 
+        "error": "❌", "critical": "🚨", "start": "🚀"
+    }
+    
+    # Build message components
+    icon = icons.get(category, "📝")
+    level_icon = level_icons.get(level, "ℹ️")
+    email_info = f" [{email}]" if email else ""
+    details_info = f" | {details}" if details else ""
+    error_info = f" | {str(error)}" if error else ""
+    
+    # Format message
+    message = f"{icon} {operation}{email_info}{details_info}{error_info}"
+    
+    # Log with appropriate level
+    if level in ["error", "critical"] or error:
+        logger.error(f"{level_icon} {message}")
+    elif level == "warning":
+        logger.warning(f"{level_icon} {message}")
+    else:
+        logger.info(f"{level_icon} {message}")
+
+# Convenience functions for common logging patterns
+def log_auth_event(operation: str, level: str = "info", email: str = "", details: str = "", error: Optional[Exception] = None) -> None:
+    """Log authentication events"""
+    log_event("auth", operation, level, email, details, error)
+
+def log_security_event(event: str, email: str = "", details: str = "") -> None:
+    """Log security events"""
+    log_event("security", event, "warning", email, details)
+
+def log_system_event(event: str, details: str = "") -> None:
+    """Log system events"""
+    log_event("system", event, "info", "", details)
+
+def log_firebase_operation(operation: str, status: str, details: str = "") -> None:
+    """Log Firebase operations"""
+    level = "success" if status.lower() == "success" else "error"
+    log_event("firebase", f"{operation}: {status.upper()}", level, "", details)
+
+def log_user_action(action: str, email: str = "", result: str = "success") -> None:
+    """Log user actions"""
+    level = "success" if result == "success" else "warning"
+    details = result if result != "success" else ""
+    log_event("user", f"Action: {action}", level, email, details)
+
+# Backward compatibility wrappers for existing code
+def log_auth_start(operation: str, email: str = "") -> None:
+    """Log auth start events"""
+    log_auth_event(operation, "start", email)
+
+def log_auth_success(operation: str, email: str = "", details: str = "") -> None:
+    """Log auth success events"""
+    log_auth_event(operation, "success", email, details)
+
+def log_auth_failure(operation: str, email: str = "", reason: str = "") -> None:
+    """Log auth failure events"""
+    log_auth_event(operation, "warning", email, reason)
+
+def log_auth_error(operation: str, error: Exception, email: str = "") -> None:
+    """Log auth error events"""
+    log_auth_event(operation, "error", email, error=error)
+
+def log_config_event(event: str, status: str = "INFO") -> None:
+    """Log configuration events"""
+    level = "error" if status == "ERROR" else "warning" if status == "WARNING" else "info"
+    log_event("config", event, level)
+
+def log_session_event(event: str, email: str = "", details: str = "") -> None:
+    """Log session events"""
+    log_event("session", event, "info", email, details)
+
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
+
+def get_redirect_uri() -> str:
+    """Static redirect URI configuration
+    
+    Returns the configured redirect URI from secrets.
+    Change REDIRECT_URI in secrets.toml based on deployment environment.
+    """
+    try:
+        redirect_uri = st.secrets.get("REDIRECT_URI", "http://localhost:8501/oauth2callback")
+        log_config_event(f"Redirect URI loaded: {redirect_uri}")
+        return redirect_uri
+        
+    except Exception as e:
+        log_config_event(f"Failed to load redirect URI: {str(e)}", "ERROR")
+        # Emergency fallback
+        fallback_uri = "http://localhost:8501/oauth2callback"
+        log_config_event(f"Using fallback redirect URI: {fallback_uri}", "WARNING")
+        return fallback_uri
 
 def get_firebase_config() -> Dict[str, Any]:
     """Dapatkan konfigurasi Firebase yang terstruktur"""
     try:
         if "firebase" not in st.secrets:
+            log_config_event("Firebase config section missing from secrets", "ERROR")
             return {}
         
         service_account = dict(st.secrets["firebase"])
         firebase_api_key = st.secrets.get("FIREBASE_API_KEY", "")
         
-        return {
+        config = {
             "apiKey": firebase_api_key,
             "authDomain": f"{service_account.get('project_id', '')}.firebaseapp.com",
             "projectId": service_account.get('project_id', ''),
             "databaseURL": f"https://{service_account.get('project_id', '')}-default-rtdb.firebaseio.com",
             "storageBucket": f"{service_account.get('project_id', '')}.appspot.com"
         }
+        
+        log_config_event(f"Firebase config loaded for project: {service_account.get('project_id', 'unknown')}")
+        return config
+        
     except Exception as e:
-        logger.error(f"Failed to get Firebase config: {e}")
+        log_config_event(f"Failed to load Firebase config: {str(e)}", "ERROR")
         return {}
 
 def is_config_valid() -> bool:
@@ -82,358 +248,386 @@ def is_config_valid() -> bool:
         st.secrets.get("FIREBASE_API_KEY")
     )
 
-def initialize_session_state() -> None:
-    """Inisialisasi state sesi dengan nilai default"""
-    default_values = {
-        'logged_in': False,
-        'login_attempts': 0,
-        'firebase_initialized': False,
-        'auth_type': '🔒 Masuk',
-        'user_email': None,
-        'remember_me': False,
-        'login_time': None
-    }
-    
-    for key, default_value in default_values.items():
-        if key not in st.session_state:
-            st.session_state[key] = default_value
+# UNIFIED SESSION MANAGEMENT SYSTEM
+# =============================================================================
 
-def verify_environment() -> bool:
-    """Verifikasi bahwa semua variabel lingkungan yang diperlukan telah diset"""
-    if not is_config_valid():
-        logger.error("Configuration validation failed")
-        return False
+class SessionManager:
+    """Centralized session and cookie management"""
     
-    # Periksa apakah Firebase config ada
-    if "firebase" not in st.secrets:
-        logger.error("Firebase configuration missing")
-        return False
+    @staticmethod
+    def initialize() -> None:
+        """Initialize session state with default values"""
+        defaults = {
+            'logged_in': False, 'login_attempts': 0, 'firebase_initialized': False,
+            'auth_type': '🔒 Masuk', 'user_email': None, 'remember_me': False, 'login_time': None
+        }
+        for key, value in defaults.items():
+            if key not in st.session_state:
+                st.session_state[key] = value
     
-    return True
+    @staticmethod
+    def sync_from_cookies() -> None:
+        """Sync login state from cookies to session_state"""
+        try:
+            if not hasattr(cookie_controller, 'get'):
+                log_event("SYSTEM", "cookie_sync", "info", details="Controller not ready")
+                return
+            
+            is_logged_in = cookie_controller.get('is_logged_in')
+            user_email = cookie_controller.get('user_email')
+            remember_me = cookie_controller.get('remember_me')
+            
+            if is_logged_in == 'True' and user_email and SessionManager._is_valid_email(user_email):
+                st.session_state.update({
+                    'logged_in': True, 'user_email': user_email,
+                    'remember_me': remember_me == 'True'
+                })
+                log_event("SESSION", "cookie_sync", "info", email=user_email, details="State restored from cookies")
+            else:
+                st.session_state['logged_in'] = False
+                if user_email and not SessionManager._is_valid_email(user_email):
+                    SessionManager._clear_cookies()
+                    log_event("SECURITY", "invalid_email_cookie", "warning", email=user_email, details="Cookies cleared")
+                    
+        except Exception as e:
+            st.session_state['logged_in'] = False
+            SessionManager._clear_cookies()
+            log_event("ERROR", "cookie_sync", "error", error=e)
+    
+    @staticmethod
+    def set_login_cookies(email: str, remember: bool = False) -> None:
+        """Set authentication cookies"""
+        try:
+            max_age = REMEMBER_ME_DURATION if remember else None
+            cookie_controller.set('is_logged_in', 'True', max_age=max_age)
+            cookie_controller.set('user_email', email, max_age=max_age)
+            cookie_controller.set('remember_me', str(remember), max_age=max_age)
+            cookie_controller.set('last_email', email, max_age=LAST_EMAIL_DURATION)
+            
+            duration_desc = f"{REMEMBER_ME_DURATION//86400} days" if remember else "session only"
+            log_event("SESSION", "login_cookies_set", "info", email=email, details=duration_desc)
+        except Exception as e:
+            log_event("ERROR", "cookie_setting", "error", email=email, error=e)
+    
+    @staticmethod
+    def get_remembered_email() -> str:
+        """Get last remembered email for auto-fill"""
+        try:
+            email = cookie_controller.get('last_email') or ""
+            if email and SessionManager._is_valid_email(email):
+                log_event("SESSION", "email_remembered", "info", email=email)
+                return email
+            elif email:
+                cookie_controller.remove('last_email')
+                log_event("SECURITY", "invalid_remembered_email", "warning", email=email)
+        except Exception as e:
+            log_event("ERROR", "remember_email_retrieval", "error", error=e)
+        return ""
+    
+    @staticmethod
+    def clear_auth_data() -> None:
+        """Clear all authentication data"""
+        SessionManager._clear_cookies()
+        st.session_state.update({
+            'logged_in': False, 'user_email': None, 'remember_me': False,
+            'login_attempts': 0, 'login_time': None
+        })
+        log_event("SESSION", "auth_cleared", "info", details="Complete logout")
+    
+    @staticmethod
+    def is_app_ready() -> bool:
+        """Check if app is ready for use"""
+        return all([
+            st.session_state.get('firebase_initialized', False),
+            st.session_state.get('firebase_auth') is not None,
+            st.session_state.get('firestore') is not None
+        ])
+    
+    @staticmethod
+    def _clear_cookies() -> None:
+        """Internal method to clear cookies"""
+        try:
+            for cookie in ['is_logged_in', 'user_email', 'remember_me']:
+                cookie_controller.remove(cookie)
+        except Exception as e:
+            log_event("ERROR", "cookie_clearing", "error", error=e)
+    
+    @staticmethod
+    def _is_valid_email(email: str) -> bool:
+        """Internal email validation"""
+        is_valid, _ = validate_email_format(email)
+        return is_valid
+
+# Backward compatibility functions
+def initialize_session_state() -> None:
+    """Legacy wrapper for SessionManager.initialize()"""
+    SessionManager.initialize()
 
 def sync_login_state() -> None:
-    """Sinkronisasi status login dari cookie ke session_state dengan error handling yang lebih baik"""
-    try:
-        # Tunggu sejenak untuk memastikan cookie controller siap
-        if not hasattr(cookie_controller, 'get'):
-            logger.warning("Cookie controller not ready, skipping sync")
-            return
-        
-        is_logged_in_cookie = cookie_controller.get('is_logged_in')
-        user_email_cookie = cookie_controller.get('user_email')
-        remember_me_cookie = cookie_controller.get('remember_me')
-        
-        # Validasi data cookie sebelum sync
-        if is_logged_in_cookie == 'True' and user_email_cookie:
-            # Validasi format email dari cookie
-            is_valid_email, _ = validate_email_format(user_email_cookie)
-            if is_valid_email:
-                st.session_state['logged_in'] = True
-                st.session_state['user_email'] = user_email_cookie
-                if remember_me_cookie == 'True':
-                    st.session_state['remember_me'] = True
-                logger.info(f"Login state synced from cookies for user: {user_email_cookie}")
-            else:
-                logger.warning(f"Invalid email format in cookie: {user_email_cookie}")
-                # Clear invalid cookies
-                clear_remember_me_cookies()
-                st.session_state['logged_in'] = False
-        else:
-            st.session_state['logged_in'] = False
-            
-    except Exception as e:
-        logger.error(f"Error syncing login state: {e}")
-        st.session_state['logged_in'] = False
-        # Clear potentially corrupted cookies
-        try:
-            clear_remember_me_cookies()
-        except:
-            pass
+    """Legacy wrapper for SessionManager.sync_from_cookies()"""
+    SessionManager.sync_from_cookies()
 
 def set_remember_me_cookies(email: str, remember: bool = False) -> None:
-    """Set cookies untuk fungsionalitas 'ingat saya'"""
-    try:
-        if remember:
-            # Set cookies dengan masa berlaku yang dikonfigurasi
-            cookie_controller.set('is_logged_in', 'True', max_age=REMEMBER_ME_DURATION)
-            cookie_controller.set('user_email', email, max_age=REMEMBER_ME_DURATION)
-            cookie_controller.set('remember_me', 'True', max_age=REMEMBER_ME_DURATION)
-            cookie_controller.set('last_email', email, max_age=LAST_EMAIL_DURATION)
-        else:
-            # Set session cookies (berakhir saat browser ditutup)
-            cookie_controller.set('is_logged_in', 'True')
-            cookie_controller.set('user_email', email)
-            cookie_controller.set('remember_me', 'False')
-            
-    except Exception as e:
-        logger.error(f"Error setting cookies: {e}")
+    """Legacy wrapper for SessionManager.set_login_cookies()"""  
+    SessionManager.set_login_cookies(email, remember)
 
 def get_remembered_email() -> str:
-    """Dapatkan email terakhir yang diingat untuk kemudahan pengguna"""
-    try:
-        remembered_email = cookie_controller.get('last_email') or ""
-        # Validasi email yang diingat
-        if remembered_email:
-            is_valid, _ = validate_email_format(remembered_email)
-            if is_valid:
-                return remembered_email
-            else:
-                logger.warning(f"Invalid remembered email format: {remembered_email}")
-                # Clear invalid email
-                try:
-                    cookie_controller.remove('last_email')
-                except:
-                    pass
-                return ""
-        return ""
-    except Exception as e:
-        logger.error(f"Error getting remembered email: {e}")
-        return ""
-
-def is_app_ready() -> bool:
-    """Check apakah aplikasi sudah siap untuk digunakan"""
-    return (
-        st.session_state.get('firebase_initialized', False) and
-        st.session_state.get('firebase_auth') is not None and
-        st.session_state.get('firestore') is not None
-    )
+    """Legacy wrapper for SessionManager.get_remembered_email()"""
+    return SessionManager.get_remembered_email()
 
 def clear_remember_me_cookies() -> None:
-    """Bersihkan semua cookies terkait autentikasi"""
-    try:
-        cookie_controller.remove('is_logged_in')
-        cookie_controller.remove('user_email')
-        cookie_controller.remove('remember_me')
-    except Exception as e:
-        logger.error(f"Error clearing cookies: {e}")
+    """Legacy wrapper for SessionManager.clear_auth_data()"""
+    SessionManager.clear_auth_data()
 
-# =============================================================================
-# =============================================================================
-# PROGRESS AND UI MANAGEMENT
-# =============================================================================
+def is_app_ready() -> bool:
+    """Legacy wrapper for SessionManager.is_app_ready()"""
+    return SessionManager.is_app_ready()
 
-def create_progress_manager(container_placeholder: Any) -> Dict[str, Any]:
-    """Create a progress manager untuk handling progress dan message secara konsisten"""
-    progress_container = container_placeholder.empty()
-    message_container = container_placeholder.empty()
-    
-    return {
-        'placeholder': container_placeholder,
-        'progress': progress_container,
-        'message': message_container
-    }
-
-def update_progress(manager: Dict[str, Any], progress: float, message: str) -> None:
-    """Update progress bar dan message secara konsisten"""
-    if manager and 'progress' in manager and 'message' in manager:
-        manager['progress'].progress(progress)
-        manager['message'].caption(message)
-
-def clear_progress(manager: Dict[str, Any], keep_message: bool = False) -> None:
-    """Clear progress container, optionally keep message"""
-    if manager and 'progress' in manager:
-        manager['progress'].empty()
-        if not keep_message and 'message' in manager:
-            manager['message'].empty()
-
-def show_success_message(manager: Dict[str, Any], message: str, clear_after: float = 1.2) -> None:
-    """Show success message dengan auto-clear"""
-    if manager and 'message' in manager:
-        manager['message'].success(message)
-        if clear_after > 0:
-            time.sleep(clear_after)
-            manager['message'].empty()
-
-def show_error_message(manager: Dict[str, Any], message: str) -> None:
-    """Show error message"""
-    if manager and 'message' in manager:
-        manager['message'].error(message)
-
-def show_warning_message(manager: Dict[str, Any], message: str) -> None:
-    """Show warning message"""
-    if manager and 'message' in manager:
-        manager['message'].warning(message)
-
-def show_info_message(manager: Dict[str, Any], message: str) -> None:
-    """Show info message"""
-    if manager and 'message' in manager:
-        manager['message'].info(message)
-
-def handle_validation_display(manager: Dict[str, Any], errors: list) -> None:
-    """Handle validation errors display secara konsisten"""
-    if not errors or not manager:
-        return
-    
-    clear_progress(manager)
-    
-    error_message = "**❌ Data tidak valid:**\n\n" + "\n".join(f"• {error}" for error in errors)
-    show_error_message(manager, error_message)
-    show_error_toast("Data tidak valid")
-
-# =============================================================================
 # =============================================================================
 # CENTRALIZED ERROR HANDLING
 # =============================================================================
 
-def handle_firebase_error(error: Exception, context: str = "") -> Tuple[str, str]:
-    """Centralized Firebase error handling dengan pesan yang konsisten"""
-    error_str = str(error).upper()
-    
-    # Firebase Authentication Errors
-    if "INVALID_EMAIL" in error_str:
-        return "Format email tidak valid", "Format email tidak valid. Periksa kembali alamat email Anda."
-    elif "USER_NOT_FOUND" in error_str or "INVALID_LOGIN_CREDENTIALS" in error_str:
-        if context == "login":
-            return "Email tidak terdaftar", "Email tidak terdaftar dalam sistem kami. Silakan daftar terlebih dahulu."
-        else:
-            return "User tidak ditemukan", "User tidak ditemukan dalam sistem."
-    elif "WRONG_PASSWORD" in error_str or "INVALID_PASSWORD" in error_str:
-        return "Kata sandi salah", "Kata sandi salah. Silakan coba lagi atau reset kata sandi."
-    elif "USER_DISABLED" in error_str:
-        return "Akun dinonaktifkan", "Akun Anda telah dinonaktifkan. Hubungi administrator."
-    elif "EMAIL_EXISTS" in error_str or "EMAIL_ALREADY_IN_USE" in error_str:
-        return "Email sudah terdaftar", "Email ini sudah terdaftar. Silakan gunakan email lain atau login."
-    elif "WEAK_PASSWORD" in error_str:
-        return "Kata sandi terlalu lemah", "Kata sandi terlalu lemah. Gunakan minimal 8 karakter dengan kombinasi huruf besar, kecil, angka dan simbol."
-    elif "TOO_MANY_REQUESTS" in error_str:
-        return "Terlalu banyak percobaan", "Terlalu banyak percobaan. Tunggu beberapa menit sebelum mencoba lagi."
-    elif "NETWORK_REQUEST_FAILED" in error_str:
-        return "Koneksi bermasalah", "Koneksi internet bermasalah. Periksa koneksi Anda dan coba lagi."
-    elif "QUOTA_EXCEEDED" in error_str:
-        return "Batas tercapai", "Batas pengiriman email Firebase tercapai. Coba lagi nanti."
-    else:
-        return f"{context.title()} gagal", f"{context.title()} gagal: {str(error)}"
+# UNIFIED ERROR HANDLING SYSTEM
+# =============================================================================
 
-def show_error_with_context(error: Exception, context: str, manager: Optional[Dict[str, Any]] = None) -> None:
-    """Tampilkan error dengan konteks dan UI feedback yang konsisten"""
-    toast_msg, detailed_msg = handle_firebase_error(error, context)
+def handle_auth_error(error: Optional[Exception] = None, context: str = "", 
+                     validation_errors: Optional[List[str]] = None,
+                     progress_container: Any = None, message_container: Any = None) -> Tuple[str, str]:
+    """
+    Unified error handling for all authentication operations
     
-    # Clear progress jika ada manager
-    if manager:
-        clear_progress(manager)
-        show_error_message(manager, f"❌ {detailed_msg}")
-    else:
-        # Fallback ke st.error jika tidak ada manager
+    Args:
+        error: Exception object for Firebase/system errors
+        context: Operation context (login, register, etc.)
+        validation_errors: List of validation error messages
+        progress_container: Streamlit container for progress display
+        message_container: Streamlit container for messages
+    
+    Returns:
+        Tuple of (toast_message, detailed_message)
+    """
+    # Clear progress if provided
+    if progress_container:
         try:
-            st.error(f"❌ {detailed_msg}")
+            progress_container.empty()
+        except:
+            pass
+    
+    # Handle validation errors
+    if validation_errors:
+        toast_msg = "Data tidak valid"
+        detailed_msg = "Validasi data gagal"
+        
+        if message_container:
+            message_container.error(f"❌ {detailed_msg}:")
+            for err in validation_errors:
+                message_container.error(f"• {err}")
+        else:
+            st.error(f"❌ {detailed_msg}:")
+            for err in validation_errors:
+                st.error(f"• {err}")
+        
+        show_toast("error", toast_msg)
+        log_event("ERROR", "validation", "warning", details=f"Validation failed: {'; '.join(validation_errors)}")
+        return toast_msg, detailed_msg
+    
+    # Handle Firebase/system errors
+    if error:
+        error_str = str(error).upper()
+        
+        # Firebase error mapping
+        error_map = {
+            "INVALID_EMAIL": ("Format email tidak valid", "Format email tidak valid. Periksa kembali alamat email Anda."),
+            "USER_NOT_FOUND": ("Email tidak terdaftar", "Email tidak terdaftar dalam sistem kami. Silakan daftar terlebih dahulu."),
+            "INVALID_LOGIN_CREDENTIALS": ("Login gagal", "Email atau password salah. Periksa kembali data Anda."),
+            "WRONG_PASSWORD": ("Kata sandi salah", "Kata sandi salah. Silakan coba lagi atau reset kata sandi."),
+            "INVALID_PASSWORD": ("Kata sandi salah", "Kata sandi salah. Silakan coba lagi atau reset kata sandi."),
+            "USER_DISABLED": ("Akun dinonaktifkan", "Akun Anda telah dinonaktifkan. Hubungi administrator."),
+            "EMAIL_EXISTS": ("Email sudah terdaftar", "Email ini sudah terdaftar. Silakan gunakan email lain atau login."),
+            "EMAIL_ALREADY_IN_USE": ("Email sudah terdaftar", "Email ini sudah terdaftar. Silakan gunakan email lain atau login."),
+            "WEAK_PASSWORD": ("Kata sandi terlalu lemah", "Kata sandi terlalu lemah. Gunakan minimal 8 karakter dengan kombinasi huruf dan angka."),
+            "TOO_MANY_REQUESTS": ("Terlalu banyak percobaan", "Terlalu banyak percobaan. Tunggu beberapa menit sebelum mencoba lagi."),
+            "NETWORK_REQUEST_FAILED": ("Koneksi bermasalah", "Koneksi internet bermasalah. Periksa koneksi Anda dan coba lagi."),
+            "QUOTA_EXCEEDED": ("Batas tercapai", "Batas pengiriman email Firebase tercapai. Coba lagi nanti.")
+        }
+        
+        # Find matching error
+        for key, (toast_msg, detailed_msg) in error_map.items():
+            if key in error_str:
+                break
+        else:
+            toast_msg = f"{context.title()} gagal" if context else "Operasi gagal"
+            detailed_msg = f"{context.title()} gagal: {str(error)}" if context else f"Operasi gagal: {str(error)}"
+        
+        # Display error
+        try:
+            if message_container:
+                message_container.error(f"❌ {detailed_msg}")
+            else:
+                st.error(f"❌ {detailed_msg}")
         except:
             st.write(f"❌ {detailed_msg}")
+        
+        # Show toast and log
+        show_toast("error", toast_msg)
+        log_event("ERROR", context or "operation", "error", details=str(error), error=error)
+        
+        return toast_msg, detailed_msg
     
-    # Tampilkan toast
-    show_error_toast(toast_msg)
-    
-    # Log error
-    logger.error(f"{context.title()} failed: {str(error)}")
+    # Default case
+    return "Operasi gagal", "Terjadi kesalahan yang tidak diketahui"
 
-def handle_validation_errors(errors: list, manager: Optional[Dict[str, Any]] = None, 
-                           progress_container: Any = None, message_container: Any = None) -> None:
-    """Handle validation errors dengan display yang konsisten"""
-    if not errors:
-        return
-    
-    # Use new manager if provided
-    if manager:
-        handle_validation_display(manager, errors)
-    # Fallback to old containers for backward compatibility
-    elif progress_container and message_container:
-        temp_manager = {
-            'progress': progress_container, 
-            'message': message_container
-        }
-        handle_validation_display(temp_manager, errors)
-    else:
-        # Final fallback
-        st.error("❌ Validasi data gagal:")
-        for error in errors:
-            st.error(error)
-        show_error_toast("Data tidak valid")
-    
-    logger.warning(f"Validation failed: {'; '.join(errors)}")
-    logger.warning(f"Validation failed: {'; '.join(errors)}")
+# Backward compatibility wrappers
+def handle_firebase_error(error: Exception, context: str = "") -> Tuple[str, str]:
+    """Legacy wrapper for handle_auth_error"""
+    return handle_auth_error(error=error, context=context)
 
+def show_error_with_context(error: Exception, context: str, progress_container: Any = None, message_container: Any = None) -> None:
+    """Legacy wrapper for handle_auth_error"""
+    handle_auth_error(error=error, context=context, progress_container=progress_container, message_container=message_container)
+
+def handle_validation_errors(errors: list, progress_container: Any = None, message_container: Any = None) -> None:
+    """Legacy wrapper for handle_auth_error"""
+    handle_auth_error(validation_errors=errors, progress_container=progress_container, message_container=message_container)
+
+# UNIFIED VALIDATION SYSTEM
+# =============================================================================
+
+class ValidationManager:
+    """Centralized validation for all input data"""
+    
+    @staticmethod
+    def validate_email(email: str) -> Tuple[bool, str]:
+        """Comprehensive email validation"""
+        if not email:
+            return False, "Email tidak boleh kosong"
+        
+        # Check length limits
+        if len(email) > 254:
+            return False, "Email terlalu panjang (maksimal 254 karakter)"
+        
+        # Basic email pattern
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(email_pattern, email):
+            return False, "Format email tidak valid. Contoh: nama@domain.com"
+        
+        # Additional checks
+        local_part, domain = email.rsplit('@', 1)
+        if len(local_part) > 64:
+            return False, "Bagian lokal email terlalu panjang (maksimal 64 karakter)"
+        
+        if '..' in email or local_part.startswith('.') or local_part.endswith('.'):
+            return False, "Format email tidak valid"
+        
+        return True, ""
+    
+    @staticmethod
+    def validate_name(name: str, field_name: str = "Nama") -> Tuple[bool, str]:
+        """Name validation with flexible rules"""
+        if not name:
+            return False, f"{field_name} tidak boleh kosong"
+        
+        name = name.strip()
+        if len(name) < 2:
+            return False, f"{field_name} minimal 2 karakter"
+        if len(name) > 50:
+            return False, f"{field_name} maksimal 50 karakter"
+        
+        # Allow letters, spaces, apostrophes, and hyphens
+        if not re.match(r'^[a-zA-Z\s\'-]+$', name):
+            return False, f"{field_name} hanya boleh mengandung huruf, spasi, apostrof, dan tanda hubung"
+        
+        return True, ""
+    
+    @staticmethod
+    def validate_password(password: str) -> Tuple[bool, str]:
+        """Password strength validation"""
+        if len(password) < 8:
+            return False, "Kata sandi minimal 8 karakter"
+        
+        checks = [
+            (any(c.isupper() for c in password), "harus mengandung huruf besar"),
+            (any(c.islower() for c in password), "harus mengandung huruf kecil"),
+            (any(c.isdigit() for c in password), "harus mengandung angka")
+        ]
+        
+        for check, msg in checks:
+            if not check:
+                return False, f"Kata sandi {msg}"
+        
+        return True, ""
+    
+    @staticmethod
+    def validate_registration_data(email: str, password: str, first_name: str, last_name: str) -> List[str]:
+        """Complete registration data validation"""
+        errors = []
+        
+        validators = [
+            (ValidationManager.validate_email(email), "Email"),
+            (ValidationManager.validate_password(password), "Password"),
+            (ValidationManager.validate_name(first_name, "Nama depan"), "Nama depan"),
+            (ValidationManager.validate_name(last_name, "Nama belakang"), "Nama belakang")
+        ]
+        
+        for (is_valid, error_msg), field in validators:
+            if not is_valid:
+                errors.append(f"{field}: {error_msg}")
+        
+        return errors
+
+class SecurityManager:
+    """Rate limiting and session security"""
+    
+    @staticmethod
+    def check_rate_limit(user_email: str) -> bool:
+        """Check if user exceeded login rate limit"""
+        now = datetime.now()
+        rate_limit_key = f'ratelimit_{user_email}'
+        attempts = st.session_state.get(rate_limit_key, [])
+        
+        # Filter valid attempts within window
+        valid_attempts = [
+            attempt for attempt in attempts 
+            if (now - attempt) < timedelta(seconds=RATE_LIMIT_WINDOW)
+        ]
+        
+        if len(valid_attempts) >= MAX_LOGIN_ATTEMPTS:
+            return False
+        
+        valid_attempts.append(now)
+        st.session_state[rate_limit_key] = valid_attempts
+        return True
+    
+    @staticmethod
+    def check_session_timeout() -> bool:
+        """Check if user session has expired"""
+        login_time = st.session_state.get('login_time')
+        if not login_time:
+            return True
+        
+        elapsed = datetime.now() - login_time
+        return elapsed < timedelta(seconds=SESSION_TIMEOUT)
+
+# Backward compatibility wrappers
 def validate_email_format(email: str) -> Tuple[bool, str]:
-    """Validasi format email"""
-    if not email:
-        return False, "Email tidak boleh kosong"
-    
-    # Pola email dasar
-    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    
-    if not re.match(email_pattern, email):
-        return False, "Format email tidak valid. Contoh: nama@domain.com"
-    
-    if len(email) > 254:
-        return False, "Email terlalu panjang (maksimal 254 karakter)"
-    
-    local_part, domain = email.rsplit('@', 1)
-    if len(local_part) > 64:
-        return False, "Bagian lokal email terlalu panjang (maksimal 64 karakter)"
-    
-    if '..' in email:
-        return False, "Email tidak boleh mengandung titik berturut-turut"
-    
-    if local_part.startswith('.') or local_part.endswith('.'):
-        return False, "Email tidak boleh diawali atau diakhiri dengan titik"
-    
-    return True, ""
+    """Legacy wrapper for ValidationManager.validate_email()"""
+    return ValidationManager.validate_email(email)
 
 def validate_name_format(name: str, field_name: str) -> Tuple[bool, str]:
-    """Validasi format nama"""
-    if not name:
-        return False, f"{field_name} tidak boleh kosong"
-    
-    if len(name) < 2:
-        return False, f"{field_name} minimal 2 karakter"
-    
-    if len(name) > 50:
-        return False, f"{field_name} maksimal 50 karakter"
-    
-    # Izinkan huruf, spasi, dan karakter nama umum
-    name_pattern = r'^[a-zA-Z\s\'-]+$'
-    if not re.match(name_pattern, name):
-        return False, f"{field_name} hanya boleh mengandung huruf, spasi, apostrof, dan tanda hubung"
-    
-    return True, ""
+    """Legacy wrapper for ValidationManager.validate_name()"""
+    return ValidationManager.validate_name(name, field_name)
 
 def validate_password(password: str) -> Tuple[bool, str]:
-    """Validasi persyaratan kekuatan kata sandi"""
-    if len(password) < 8:
-        return False, "Kata sandi minimal 8 karakter"
-    if not any(c.isupper() for c in password):
-        return False, "Kata sandi harus mengandung huruf besar"
-    if not any(c.islower() for c in password):
-        return False, "Kata sandi harus mengandung huruf kecil"  
-    if not any(c.isdigit() for c in password):
-        return False, "Kata sandi harus mengandung angka"
-    return True, ""
+    """Legacy wrapper for ValidationManager.validate_password()"""
+    return ValidationManager.validate_password(password)
 
 def check_rate_limit(user_email: str) -> bool:
-    """Periksa apakah pengguna telah melebihi batas laju untuk percobaan login"""
-    now = datetime.now()
-    rate_limit_key = f'ratelimit_{user_email}'
-    attempts = st.session_state.get(rate_limit_key, [])
-
-    # Hapus percobaan di luar jendela
-    valid_attempts = [
-        attempt for attempt in attempts 
-        if (now - attempt) < timedelta(seconds=RATE_LIMIT_WINDOW)
-    ]
-
-    if len(valid_attempts) >= MAX_LOGIN_ATTEMPTS:
-        return False
-
-    valid_attempts.append(now)
-    st.session_state[rate_limit_key] = valid_attempts
-    return True
+    """Legacy wrapper for SecurityManager.check_rate_limit()"""
+    return SecurityManager.check_rate_limit(user_email)
 
 def check_session_timeout() -> bool:
-    """Periksa apakah sesi pengguna telah kedaluwarsa"""
-    if 'login_time' in st.session_state and st.session_state['login_time']:
-        elapsed = (datetime.now() - st.session_state['login_time']).total_seconds()
-        if elapsed > SESSION_TIMEOUT:
-            logout()
-            return False
-    return True
+    """Legacy wrapper for SecurityManager.check_session_timeout()"""
+    return SecurityManager.check_session_timeout()
 
 def check_email_verification_quota() -> Tuple[bool, str]:
     """Periksa kuota verifikasi email untuk mencegah spam"""
@@ -479,8 +673,8 @@ def initialize_firebase() -> Tuple[Optional[Any], Optional[Any]]:
                 st.session_state['firebase_initialized'] = False
 
         # Verifikasi environment dan konfigurasi
-        if not verify_environment():
-            logger.error("Environment verification failed")
+        if not is_config_valid():
+            logger.error("Configuration validation failed")
             return None, None
             
         # Periksa konfigurasi Firebase
@@ -582,7 +776,7 @@ def get_google_authorization_url() -> str:
     base_url = 'https://accounts.google.com/o/oauth2/v2/auth'
     params = {
         'client_id': st.secrets.get("GOOGLE_CLIENT_ID", ""),
-        'redirect_uri': st.secrets.get("REDIRECT_URI", ""),
+        'redirect_uri': get_redirect_uri(),
         'response_type': 'code',
         'scope': 'openid email profile',
         'access_type': 'offline',
@@ -599,7 +793,7 @@ async def exchange_google_token(code: str) -> Tuple[Optional[str], Optional[Dict
             'client_secret': st.secrets.get("GOOGLE_CLIENT_SECRET", ""),
             'code': code,
             'grant_type': 'authorization_code',
-            'redirect_uri': st.secrets.get("REDIRECT_URI", "")
+            'redirect_uri': get_redirect_uri()
         }
 
         try:
@@ -717,12 +911,16 @@ def handle_google_login_callback() -> bool:
                         # Clear progress dan tampilkan pesan sukses
                         time.sleep(1.0)
                         progress_container.empty()
-                        message_container.success("🎉 Login Google berhasil! Selamat datang!")
-                        show_success_toast("Login Google berhasil!")
+                        message_container.success("🎉 Login Google berhasil! Mengarahkan ke dashboard...")
+                        show_success_toast("Login Google berhasil! Mengarahkan ke dashboard...")
                         
+                        # Auto-redirect ke halaman tools setelah login berhasil
                         time.sleep(1.0)  # Beri waktu untuk membaca pesan
                         callback_progress.empty()
-                        st.rerun()
+                        st.session_state['should_redirect'] = True
+                        st.session_state['login_success'] = True  # Flag untuk menampilkan toast di main app
+                        st.query_params.clear()  # Clear OAuth params
+                        st.rerun()  # Rerun untuk trigger redirect logic
                         return True
                     else:
                         # Email belum diverifikasi untuk user non-Google
@@ -816,12 +1014,15 @@ def login_user(email: str, password: str, firebase_auth: Any, firestore_client: 
                remember: bool, progress_container: Any, message_container: Any) -> bool:
     """Proses login pengguna dengan feedback yang ditampilkan di lokasi yang konsisten"""
     
+    log_auth_start("Login process", email)
+    
     # Validasi format email
     is_valid_email, email_message = validate_email_format(email)
     if not is_valid_email:
         progress_container.empty()
         show_error_toast("Format email tidak valid")
         message_container.error(email_message)
+        log_auth_failure("Login validation", email, "Invalid email format")
         return False
     
     # Cek rate limiting
@@ -829,21 +1030,21 @@ def login_user(email: str, password: str, firebase_auth: Any, firestore_client: 
         progress_container.empty()
         show_error_toast("Terlalu banyak percobaan")
         message_container.error("Terlalu banyak percobaan login. Silakan coba lagi nanti.")
+        log_security_event("Rate limit exceeded", email, "Login blocked")
         return False
     
     try:
         # Step 1: Validating credentials
-        progress_container.progress(0.1)
+        progress_container.progress(0.2)
         message_container.caption("🔐 Memvalidasi kredensial...")
-        time.sleep(0.3)  # Brief pause untuk visibilitas
         
         # Coba login dengan Firebase
         user = firebase_auth.sign_in_with_email_and_password(email, password)
+        log_firebase_operation("Authentication", "success", f"User {email} authenticated")
         
         # Step 2: Checking email verification status
-        progress_container.progress(0.4)
-        message_container.caption("📧 Memeriksa status verifikasi email...")
-        time.sleep(0.2)  # Brief pause untuk visibilitas
+        progress_container.progress(0.5)
+        message_container.caption("⚠️ Memeriksa status verifikasi email...")
         
         # Sync dan cek status verifikasi email dari Firebase Auth
         email_verified = sync_email_verified_to_firestore(firebase_auth, firestore_client, user)
@@ -858,24 +1059,24 @@ def login_user(email: str, password: str, firebase_auth: Any, firestore_client: 
                 f"Setelah verifikasi, silakan coba login kembali.\n\n"
                 f"💡 *Tip: Periksa juga folder spam/junk email*"
             )
+            log_auth_failure("Login verification", email, "Email not verified")
             return False
         
         # Step 3: Verifying user data
         progress_container.progress(0.7)
         message_container.caption("👤 Memverifikasi data pengguna...")
-        time.sleep(0.2)  # Brief pause untuk visibilitas
         
         # Verifikasi pengguna ada di Firestore
         if not verify_user_exists(email, firestore_client):
             progress_container.empty()
             show_error_toast("Data pengguna tidak ditemukan")
             message_container.error("Data pengguna tidak ditemukan di sistem. Silakan hubungi administrator.")
+            log_auth_failure("User verification", email, "User data not found in Firestore")
             return False
-        
+            
         # Step 4: Setting up session
         progress_container.progress(0.9)
         message_container.caption("⚙️ Menyiapkan sesi pengguna...")
-        time.sleep(0.2)  # Brief pause untuk visibilitas
         
         # Set status login
         st.session_state['logged_in'] = True
@@ -886,14 +1087,24 @@ def login_user(email: str, password: str, firebase_auth: Any, firestore_client: 
         # Set cookies
         set_remember_me_cookies(email, remember)
         
-        # Step 4: Complete
+        # Step 5: Complete
         progress_container.progress(1.0)
-        message_container.success("🎉 Login berhasil! Selamat datang kembali!")
+        message_container.success("🎉 Login berhasil! Mengarahkan ke dashboard...")
         
-        logger.info(f"Login successful for: {email}")
-        show_success_toast("Login berhasil! Selamat datang kembali!")
+        log_auth_success("Login process", email, f"Remember me: {remember}")
+        log_user_action("User logged in", email)
+        show_success_toast("Login berhasil! Mengarahkan ke dashboard...")
         
-        # Return immediately, clearing akan di-handle di level atas
+        # Clear progress setelah menampilkan pesan sukses, tapi biarkan message tetap
+        time.sleep(SUCCESS_DISPLAY_DURATION)  # Beri waktu untuk menampilkan progress completion
+        progress_container.empty()
+        
+        # Auto-redirect ke halaman tools setelah login berhasil
+        st.session_state['should_redirect'] = True
+        st.session_state['login_success'] = True  # Flag untuk menampilkan toast di main app
+        time.sleep(REDIRECT_PAUSE_DURATION)  # Brief pause untuk user experience
+        st.rerun()  # Rerun untuk trigger redirect logic
+        
         return True
         
     except Exception as e:
@@ -917,13 +1128,12 @@ def login_user(email: str, password: str, firebase_auth: Any, firestore_client: 
                 f"atau periksa ejaan email Anda."
             )
             
-            # Log error
-            logger.warning(f"Login failed - email not registered: {email}")
+            log_auth_failure("Login authentication", email, "Email not registered")
             return False
         else:
             # Gunakan centralized error handling untuk error lainnya
-            temp_manager = {'progress': progress_container, 'message': message_container}
-            show_error_with_context(e, "login", temp_manager)
+            log_auth_error("Login process", e, email)
+            show_error_with_context(e, "login", progress_container, message_container)
             return False
 
 def register_user(first_name: str, last_name: str, email: str, password: str, 
@@ -959,8 +1169,7 @@ def register_user(first_name: str, last_name: str, email: str, password: str,
             validation_errors.append(f"❌ {password_message}")
     
     if validation_errors:
-        temp_manager = {'progress': progress_container, 'message': message_container}
-        handle_validation_errors(validation_errors, temp_manager)
+        handle_validation_errors(validation_errors, progress_container, message_container)
         return False, "\n".join(validation_errors)
     
     try:
@@ -1038,14 +1247,13 @@ def register_user(first_name: str, last_name: str, email: str, password: str,
         show_success_toast("Registrasi berhasil")
         
         # Clear progress setelah menampilkan pesan sukses, tapi biarkan message tetap
-        time.sleep(1.2)
+        time.sleep(SUCCESS_DISPLAY_DURATION)
         progress_container.empty()
         
         return True, success_message
                 
     except Exception as e:
-        temp_manager = {'progress': progress_container, 'message': message_container}
-        show_error_with_context(e, "register", temp_manager)
+        show_error_with_context(e, "register", progress_container, message_container)
         return False, f"❌ Pendaftaran gagal: {str(e)}"
 
 def reset_password(email: str, firebase_auth: Any, progress_container: Any, message_container: Any) -> bool:
@@ -1106,13 +1314,12 @@ def reset_password(email: str, firebase_auth: Any, progress_container: Any, mess
         show_success_toast("Link reset password berhasil dikirim")
         
         # Clear progress setelah menampilkan pesan sukses, tapi biarkan message tetap
-        time.sleep(1.2)
+        time.sleep(SUCCESS_DISPLAY_DURATION)
         progress_container.empty()
         return True
         
     except Exception as e:
-        temp_manager = {'progress': progress_container, 'message': message_container}
-        show_error_with_context(e, "reset", temp_manager)
+        show_error_with_context(e, "reset", progress_container, message_container)
         return False
 
 def logout() -> None:
@@ -1154,33 +1361,43 @@ def logout() -> None:
         logger.error(f"Logout failed: {str(e)}")
         show_error_toast(f"Logout failed: {str(e)}")
 
-def show_toast_notification(message: str, icon: str = "ℹ") -> None:
-    """Tampilkan notifikasi toast dengan gaya yang konsisten"""
+def show_toast(message: str, toast_type: str = "info") -> None:
+    """Unified toast notification system
+    
+    Args:
+        message: Message to display
+        toast_type: Type of toast (success, error, warning, info)
+    """
+    icons = {
+        "success": "✅", "error": "❌", "warning": "⚠️", 
+        "info": "ℹ️", "critical": "🚨"
+    }
+    
+    icon = icons.get(toast_type, "ℹ️")
+    
     try:
         st.toast(message, icon=icon)
     except Exception as e:
         logger.error(f"Failed to show toast: {e}")
         st.info(f"{icon} {message}")
 
+# Backward compatibility wrappers
+def show_toast_notification(message: str, icon: str = "ℹ") -> None:
+    """Legacy toast function for compatibility"""
+    show_toast(message, "info")
+
 def show_success_toast(message: str) -> None:
-    """Tampilkan notifikasi toast sukses"""
-    show_toast_notification(message, "✅")
+    """Show success toast"""
+    show_toast(message, "success")
 
 def show_error_toast(message: str) -> None:
-    """Tampilkan notifikasi toast error"""
-    show_toast_notification(message, "❌")
+    """Show error toast"""
+    show_toast(message, "error")
 
 def show_warning_toast(message: str) -> None:
-    """Tampilkan notifikasi toast peringatan"""
+    """Show warning toast"""
+    show_toast(message, "warning")
     show_toast_notification(message, "⚠️")
-
-def show_info_toast(message: str) -> None:
-    """Tampilkan notifikasi toast info"""
-    show_toast_notification(message, "ℹ")
-
-def show_loading_toast(message: str) -> None:
-    """Tampilkan notifikasi toast loading"""
-    show_toast_notification(message, "⏳")
 
 def display_auth_tips(auth_type: str) -> None:
     """Tampilkan tips berguna berdasarkan jenis autentikasi"""
@@ -1216,6 +1433,12 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
     
     # Check app readiness
     app_ready = is_app_ready()
+    
+    # Initialize feedback containers untuk layout stability
+    feedback_placeholder = st.empty()
+    progress_container = None
+    message_container = None
+
 
     with st.form("login_form", clear_on_submit=False):
         st.markdown("### Masuk")
@@ -1284,97 +1507,137 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             disabled=not app_ready
         )
 
-        # Placeholder untuk pesan feedback dan progress di dalam form, di bawah tombol Google
+        # Placeholder untuk pesan feedback dan progress di bawah tombol Google
+        # Gunakan single placeholder dengan containers untuk konsistensi layout
         feedback_placeholder = st.empty()
+        
+        # Pre-allocate containers untuk mencegah layout shift
+        with feedback_placeholder.container():
+            progress_container = st.empty()
+            message_container = st.empty()
 
-        # Tampilkan pesan error Google OAuth jika ada - di dalam form, di bawah tombol Google
-        if st.session_state.get('google_auth_error', False):
-            email_error = st.session_state.get('google_auth_email', '')
-            st.error(f"**Akun Google Tidak Terdaftar**\n\n"
+
+    # Tampilkan pesan error Google OAuth jika ada - menggunakan feedback placeholder
+    if st.session_state.get('google_auth_error', False):
+        email_error = st.session_state.get('google_auth_email', '')
+        with feedback_placeholder.container():
+            progress_container.empty()  # Clear any existing progress
+            message_container.error(f"**Akun Google Tidak Terdaftar**\n\n"
                     f"Akun Google {email_error} belum terdaftar dalam sistem kami.")
             st.info(f"💡 **Saran:** Silakan daftar terlebih dahulu menggunakan tab 'Daftar' atau gunakan akun email yang sudah terdaftar.")
-            show_error_toast(f"Akun Google {email_error} tidak terdaftar dalam sistem kami.")
-            del st.session_state['google_auth_error']
-            if 'google_auth_email' in st.session_state:
-                del st.session_state['google_auth_email']
+        show_error_toast(f"Akun Google {email_error} tidak terdaftar dalam sistem kami.")
+        del st.session_state['google_auth_error']
+        if 'google_auth_email' in st.session_state:
+            del st.session_state['google_auth_email']
 
-        # Tampilkan pesan error verifikasi Google OAuth jika ada - di dalam form, di bawah tombol Google
-        if st.session_state.get('google_auth_verification_error', False):
-            email_error = st.session_state.get('google_auth_email', '')
-            st.warning(
+    # Tampilkan pesan error verifikasi Google OAuth jika ada - menggunakan feedback placeholder
+    if st.session_state.get('google_auth_verification_error', False):
+        email_error = st.session_state.get('google_auth_email', '')
+        with feedback_placeholder.container():
+            progress_container.empty()  # Clear any existing progress
+            message_container.warning(
                 f"📧 **Email Anda belum diverifikasi!**\n\n"
                 f"Email {email_error} belum diverifikasi. "
                 f"Silakan periksa kotak masuk email Anda dan klik link verifikasi yang telah dikirim. "
                 f"Setelah verifikasi, silakan coba login kembali.\n\n"
                 f"💡 *Tip: Periksa juga folder spam/junk email*"
             )
-            show_warning_toast("Email belum diverifikasi")
-            del st.session_state['google_auth_verification_error']
-            if 'google_auth_email' in st.session_state:
-                del st.session_state['google_auth_email']
+        show_warning_toast("Email belum diverifikasi")
+        del st.session_state['google_auth_verification_error']
+        if 'google_auth_email' in st.session_state:
+            del st.session_state['google_auth_email']
 
-        # Handle tombol login email di dalam form
-        if email_login_clicked:
-            if email and password:
-                # Validasi ulang email sebelum proses login
-                email_clean = email.strip()
-                is_valid_email, email_message = validate_email_format(email_clean)
-                if not is_valid_email:
-                    st.error(f"❌ {email_message}")
-                    show_error_toast("Format email tidak valid")
-                    st.stop()
-                
-                # Pastikan Firebase sudah siap
-                if not firebase_auth or not firestore_client:
-                    st.error("❌ Sistem belum siap. Silakan tunggu beberapa detik dan coba lagi.")
-                    show_error_toast("Sistem belum siap")
-                    st.stop()
-                
-                # Simpan email terakhir untuk kemudahan
-                try:
-                    cookie_controller.set('last_email', email_clean, max_age=LAST_EMAIL_DURATION)
-                except Exception as e:
-                    logger.warning(f"Failed to save last email: {e}")
-                
-                # Progress indicator di dalam form, di bawah tombol Google
-                progress_container = st.empty()
-                message_container = st.empty()
-                
-                progress_container.progress(0.1)
-                message_container.caption("🔐 Memulai proses login...")
-                
-                # Proses login dengan email yang sudah divalidasi
+
+    # Handle tombol login email di luar form
+    if email_login_clicked:
+        if email and password:
+            # Validasi ulang email sebelum proses login
+            email_clean = email.strip()
+            is_valid_email, email_message = validate_email_format(email_clean)
+            if not is_valid_email:
+                # Gunakan container yang sudah ada untuk error display
+                progress_container.empty()
+                message_container.error(f"❌ {email_message}")
+                show_error_toast("Format email tidak valid")
+                return
+            # Pastikan Firebase sudah siap
+            if not firebase_auth or not firestore_client:
+                progress_container.empty()
+                message_container.error("❌ Sistem belum siap. Silakan tunggu beberapa detik dan coba lagi.")
+                show_error_toast("Sistem belum siap")
+                return
+            # Simpan email terakhir untuk kemudahan
+            try:
+                cookie_controller.set('last_email', email_clean, max_age=LAST_EMAIL_DURATION)
+            except Exception as e:
+                logger.warning(f"Failed to save last email: {e}")
+            
+            # Gunakan containers yang sudah di-allocate untuk progress
+            progress_container.progress(0.1)
+            message_container.caption("🔐 Memulai proses login...")
+            # Proses login dengan email yang sudah divalidasi
+            try:
                 result = login_user(email_clean, password, firebase_auth, firestore_client, remember, progress_container, message_container)
                 if result:
                     progress_container.empty()
-                    message_container.empty()
                     st.rerun()
-            else:
-                st.warning("⚠️ Silakan isi kolom email dan kata sandi.")
-                show_warning_toast("Silakan isi kolom email dan kata sandi.")
+            except Exception as login_error:
+                progress_container.empty()
+                logger.error(f"Login process failed: {login_error}")
+                error_str = str(login_error).upper()
+                if "INVALID_LOGIN_CREDENTIALS" in error_str:
+                    show_error_toast(f"Email {email_clean} tidak terdaftar dalam sistem kami")
+                    message_container.error(
+                        f"**Akun Email Tidak Terdaftar**\n\n"
+                        f"Email {email_clean} belum terdaftar dalam sistem kami."
+                    )
+                    st.info(
+                        f"💡 **Saran:** Silakan daftar terlebih dahulu menggunakan tab 'Daftar' "
+                        f"atau periksa ejaan email Anda."
+                    )
+                else:
+                    show_error_toast("Login gagal")
+                    message_container.error(f"❌ Login gagal: {str(login_error)}")
+        else:
+            # Clear existing content dan tampilkan warning
+            progress_container.empty()
+            message_container.warning("⚠️ Silakan isi kolom email dan kata sandi.")
+            show_warning_toast("Silakan isi kolom email dan kata sandi.")
 
-        # Handle tombol login Google di dalam form
-        if google_login_clicked:
-            progress_container = st.empty()
-            message_container = st.empty()
+
+    # Handle tombol login Google di luar form
+    if google_login_clicked:
+        # Gunakan containers yang sudah di-allocate
+        progress_container.progress(0.3)
+        message_container.caption("🔗 Mengarahkan ke Google OAuth...")
+        
+        try:
+            google_url = get_google_authorization_url()
+            progress_container.progress(0.7)
+            message_container.caption("🌐 Mempersiapkan redirect ke Google...")
             
-            progress_container.progress(0.1)
-            message_container.caption("🔗 Mengalihkan ke Google OAuth...")
-            try:
-                google_url = get_google_authorization_url()
-                progress_container.progress(0.8)
-                message_container.caption("✅ Berhasil mengalihkan ke Google...")
-                time.sleep(0.5)
-                progress_container.empty()
-                message_container.empty()
-                st.markdown(f'<meta http-equiv="refresh" content="0; url={google_url}">', unsafe_allow_html=True)
-                time.sleep(1)
-            except Exception as e:
-                logger.error(f"Google OAuth redirect failed: {e}")
-                progress_container.empty()
-                message_container.error("❌ Gagal mengalihkan ke Google. Silakan coba lagi.")
-                show_error_toast("❌ Gagal mengalihkan ke Google. Silakan coba lagi.")
-
+            # Show final loading state
+            progress_container.progress(1.0)
+            message_container.caption("✅ Mengarahkan ke halaman login Google...")
+            
+            # Log the redirect
+            logger.info(f"Redirecting to Google OAuth: {google_url}")
+            show_success_toast("Mengarahkan ke Google login...")
+            
+            # Clear progress setelah menampilkan pesan sukses, seperti pada login email
+            time.sleep(SUCCESS_DISPLAY_DURATION)  # Beri waktu untuk menampilkan progress completion
+            progress_container.empty()
+            
+            # Redirect setelah progress dibersihkan
+            st.markdown(f"""
+                <meta http-equiv="refresh" content="0;url={google_url}">
+            """, unsafe_allow_html=True)
+            
+        except Exception as e:
+            logger.error(f"Google OAuth redirect failed: {e}")  
+            progress_container.empty()
+            message_container.error("❌ Gagal mengarahkan ke Google. Silakan coba lagi.")
+            show_error_toast("Gagal mengarahkan ke Google login")
     
     # Tampilkan tips untuk login
     display_auth_tips("login")
@@ -1522,7 +1785,7 @@ def display_register_form(firebase_auth: Any, firestore_client: Any) -> None:
                 st.session_state['last_registration_email'] = email
                 
                 # Clear progress setelah registrasi berhasil, tapi biarkan message tetap
-                time.sleep(1.2)  # Beri waktu untuk membaca pesan
+                time.sleep(SUCCESS_DISPLAY_DURATION)  # Beri waktu untuk membaca pesan
                 progress_container.empty()
     
     # Tampilkan tips untuk registrasi
@@ -1574,7 +1837,7 @@ def display_reset_password_form(firebase_auth: Any) -> None:
             
             # Clear progress setelah reset password selesai, tapi biarkan message tetap
             if result:
-                time.sleep(1.2)  # Beri waktu untuk membaca pesan sukses
+                time.sleep(SUCCESS_DISPLAY_DURATION)  # Beri waktu untuk membaca pesan sukses
                 progress_container.empty()
     
     # Tampilkan tips untuk reset password
@@ -1627,147 +1890,57 @@ def main() -> None:
     """Titik masuk utama aplikasi"""
     try:
         # Inisialisasi
+        log_system_event("Auth module startup initiated")
         sync_login_state()
         initialize_session_state()
         
-        logger.info("Application started")
+        log_system_event("Session and login state initialized")
         
-        # CSS Styles
+        # CSS Styles - Optimized with Layout Stability
         st.markdown("""
             <style>
-            /* Reset dan viewport configuration */
-            html, body {
-                height: 100vh !important;
-                max-height: 100vh !important;
-                overflow: hidden !important;
-                margin: 0 !important;
-                padding: 0 !important;
-            }
+            /* Main layout optimizations */
+            html, body { height: 100vh !important; overflow: hidden !important; margin: 0 !important; }
+            .main .block-container { padding-top: 1rem !important; max-height: 100vh !important; }
+            section.main { height: 100vh !important; display: flex !important; flex-direction: column !important; 
+                          justify-content: center !important; align-items: center !important; }
             
-            /* Streamlit container fixes */
-            .main .block-container {
-                padding-top: 1rem !important;
-                padding-bottom: 1rem !important;
-                max-height: 100vh !important;
-                overflow: hidden !important;
-            }
+            /* Content wrapper with consistent spacing */
+            .auth-content-wrapper { width: 100%; max-width: 500px; max-height: 95vh; overflow-y: auto; 
+                                   padding: 1rem; display: flex; flex-direction: column; align-items: center; }
             
-            /* Main content area */
-            section.main {
-                height: 100vh !important;
-                max-height: 100vh !important;
-                overflow: hidden !important;
-                display: flex !important;
-                flex-direction: column !important;
-                justify-content: center !important;
-                align-items: center !important;
-                padding: 0 !important;
-            }
+            /* Form and UI styling with layout stability */
+            .welcome-header { text-align: center; margin-bottom: 1rem; }
+            .stSelectbox { margin-bottom: 1rem !important; width: 100%; }
+            div[data-testid="stForm"] { border: 1px solid #f0f2f6; padding: 1.2rem; border-radius: 10px; 
+                                        box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 0.5rem; width: 100%; }
+            .stButton button { width: 100%; border-radius: 20px; height: 2.8rem; font-weight: bold; margin: 0.3rem 0; }
+            .stTextInput { margin-bottom: 0.8rem; }
             
-            /* Content wrapper untuk memastikan semua konten terlihat */
-            .auth-content-wrapper {
-                width: 100%;
-                max-width: 500px;
-                height: auto;
-                max-height: 95vh;
-                overflow-y: auto;
-                overflow-x: hidden;
-                padding: 1rem;
-                box-sizing: border-box;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-            }
+            /* Feedback container untuk mencegah layout shift */
+            .element-container { min-height: 2rem; }
+            .stEmpty > div { min-height: 1px; }
             
-            /* Welcome header kompak */
-            .welcome-header {
-                text-align: center;
-                margin-bottom: 1rem;
-            }
+            /* Divider styling */
+            .auth-divider-custom { display: flex; align-items: center; margin: 1rem 0; }
+            .divider-line-custom { flex: 1; height: 1px; background: #e0e0e0; }
+            .divider-text-custom { margin: 0 1rem; color: #888; font-weight: 600; letter-spacing: 1px; font-size: 0.9rem; }
             
-            /* Selectbox styling */
-            .stSelectbox {
-                margin-bottom: 1rem !important;
-                width: 100%;
-            }
+            /* Scrollbar */
+            .auth-content-wrapper::-webkit-scrollbar { width: 4px; }
+            .auth-content-wrapper::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
             
-            /* Form styling yang lebih kompak */
-            div[data-testid="stForm"] {
-                border: 1px solid #f0f2f6;
-                padding: 1.2rem;
-                border-radius: 10px;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                margin-bottom: 0.5rem;
-                width: 100%;
-                box-sizing: border-box;
-            }
-            
-            /* Button styling */
-            .stButton button {
-                width: 100%;
-                border-radius: 20px;
-                height: 2.8rem;
-                font-weight: bold;
-                margin: 0.3rem 0;
-            }
-            
-            /* Input field spacing */
-            .stTextInput {
-                margin-bottom: 0.8rem;
-            }
-            
-            /* Column spacing yang lebih rapat */
-            .stColumns {
-                gap: 0.5rem;
-            }
-            
-            /* Divider custom untuk "ATAU" */
-            .auth-divider-custom {
-                display: flex;
-                align-items: center;
-                margin: 1rem 0;
-            }
-            .divider-line-custom {
-                flex: 1;
-                height: 1px;
-                background: #e0e0e0;
-            }
-            .divider-text-custom {
-                margin: 0 1rem;
-                color: #888;
-                font-weight: 600;
-                letter-spacing: 1px;
-                font-size: 0.9rem;
-            }
-            
-            /* Hide scrollbar for webkit browsers */
-            .auth-content-wrapper::-webkit-scrollbar {
-                width: 4px;
-            }
-            .auth-content-wrapper::-webkit-scrollbar-track {
-                background: transparent;
-            }
-            .auth-content-wrapper::-webkit-scrollbar-thumb {
-                background: #ccc;
-                border-radius: 2px;
-            }
-            
-            /* Responsive adjustments */
+            /* Responsive */
             @media (max-height: 700px) {
-                .welcome-header {
-                    margin-bottom: 0.5rem;
-                }
-                div[data-testid="stForm"] {
-                    padding: 1rem;
-                }
-                .stButton button {
-                    height: 2.5rem;
-                }
+                .welcome-header { margin-bottom: 0.5rem; }
+                div[data-testid="stForm"] { padding: 1rem; }
+                .stButton button { height: 2.5rem; }
             }
             </style>
         """, unsafe_allow_html=True)
         
         # Inisialisasi Firebase dengan retry dan status feedback
+        log_system_event("Firebase initialization starting")
         firebase_auth, firestore_client = None, None
         initialization_container = st.empty()
         
@@ -1780,7 +1953,7 @@ def main() -> None:
         
         # Verifikasi Firebase berhasil diinisialisasi
         if not (firebase_auth and firestore_client):
-            logger.error("Firebase initialization failed")
+            log_firebase_operation("Initialization", "failed", "Missing auth or firestore client")
             st.error("🔥 *Kesalahan Konfigurasi Firebase*")
             st.error("""
             *Aplikasi tidak dapat berjalan tanpa konfigurasi Firebase yang valid.*
@@ -1793,16 +1966,59 @@ def main() -> None:
             Hubungi administrator sistem untuk bantuan konfigurasi.
             """)
             return
+        
+        log_firebase_operation("Initialization", "success", "Auth and Firestore clients ready")
 
         # Cek status login
         if firebase_auth and firestore_client and st.session_state.get('logged_in', False):
             if check_session_timeout():
                 user_email = st.session_state.get('user_email')
                 if user_email and verify_user_exists(user_email, firestore_client):
-                    logger.info(f"User authenticated: {user_email}")
+                    log_session_event("User session validated", user_email, "Active session found")
+                    
+                    # Auto-redirect ke halaman tools setelah login berhasil
+                    if st.session_state.get('should_redirect', False):
+                        # Clear redirect flag
+                        st.session_state['should_redirect'] = False
+                        log_system_event("Redirecting to dashboard", f"User: {user_email}")
+                        
+                        # Show brief redirect message
+                        with st.container():
+                            st.success("🎉 Login berhasil! Mengarahkan ke dashboard...")
+                            
+                            # Simple progress animation
+                            redirect_progress = st.progress(0)
+                            for i in range(0, 101, 5):  # Faster progress
+                                redirect_progress.progress(i / 100)
+                                time.sleep(PROGRESS_ANIMATION_DELAY)  # Very fast animation
+                            
+                            redirect_progress.empty()
+                        
+                        # Clear any query params
+                        st.query_params.clear()
+                        
+                        # Set ready flag untuk main app
+                        st.session_state['ready_for_redirect'] = True
+                        
+                        # Force immediate redirect dengan JavaScript
+                        st.markdown("""
+                            <script>
+                                // Force immediate reload untuk trigger main app workflow
+                                setTimeout(function() {
+                                    window.location.reload();
+                                }, 100);
+                            </script>
+                        """, unsafe_allow_html=True)
+                        
+                        time.sleep(REDIRECT_PAUSE_DURATION)  # Brief pause
+                        st.stop()  # Stop execution untuk mencegah loading form auth
+                    
+                    # User sudah login dan verified, keluar dari auth.py
+                    # Ini mengindikasikan bahwa auth sudah selesai, main app harus handle routing
+                    log_system_event("User authenticated, exiting auth module", user_email)
                     return
                 else:
-                    logger.warning(f"User verification failed: {user_email}")
+                    log_security_event("User verification failed", user_email or "unknown", "Session terminated")
                     st.error("Masalah autentikasi terdeteksi. Silakan login kembali.")
                     logout()
                     st.rerun()
@@ -1813,7 +2029,7 @@ def main() -> None:
 
             # Handle logout message
             if st.query_params.get("logout") == "1":
-                logger.info("User logged out")
+                log_user_action("User logout completed", result="Logout page accessed")
                 st.toast("Anda telah berhasil logout.", icon="✅")
                 st.query_params.clear()
                 
@@ -1824,27 +2040,19 @@ def main() -> None:
 
                 # Selalu tampilkan pilihan autentikasi jika user belum login
                 if not st.session_state.get('logged_in', False):
+                    log_system_event("Displaying authentication forms")
                     tampilkan_pilihan_autentikasi(firebase_auth, firestore_client)
             else:
                 # Firebase tidak tersedia - tampilkan error konfigurasi
-                logger.error("Firebase unavailable - configuration error")
+                log_firebase_operation("Runtime check", "failed", "Firebase services unavailable")
                 st.error("🔥 *Kesalahan Konfigurasi Firebase*")
-                st.error("""
-                *Aplikasi tidak dapat berjalan tanpa konfigurasi Firebase yang valid.*
-                
-                Silakan pastikan:
-                • File .streamlit/secrets.toml tersedia dan lengkap
-                • Konfigurasi Firebase service account benar
-                • Semua kredensial telah dikonfigurasi dengan benar
-                
-                Hubungi administrator sistem untuk bantuan konfigurasi.
-                """)
+                st.error("*Aplikasi tidak dapat berjalan tanpa konfigurasi Firebase yang valid.*")
 
             # Close the content wrapper
             st.markdown('</div>', unsafe_allow_html=True)
 
     except Exception as e:
-        logger.critical(f"Unhandled exception: {str(e)}")
+        log_auth_error("Application runtime", e)
         st.error("Terjadi kesalahan yang tidak terduga. Silakan coba lagi nanti.")
         st.session_state.clear()
         initialize_session_state()
