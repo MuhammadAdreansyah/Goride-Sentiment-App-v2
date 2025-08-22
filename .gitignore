@@ -32,21 +32,14 @@ __pycache__
 # ================================
 # DATA FILES & SENSITIVE DATASETS
 # ================================
-# PERINGATAN: File-file berikut telah dihapus dari repository untuk keamanan
-# JANGAN HAPUS ATURAN INI atau tambahkan file dengan nama yang sama
-# File asli: data/ulasan_goride.csv, data/ulasan_goride_preprocessed.csv
-# Folder: data/meta/ beserta seluruh isinya
-# 
-# Menyembunyikan folder meta dan dataset spesifik untuk keamanan
-# sambil tetap mempertahankan struktur folder data/ di repository
+# Hanya menyembunyikan data yang sangat sensitif
+# File CSV data untuk aplikasi tetap tersedia
+
+# Hanya sembunyikan folder meta untuk keamanan
 data/meta/
-data/ulasan_goride_preprocessed.csv
-data/ulasan_goride.csv
 
 # Dataset backup atau hasil preprocessing lainnya (opsional)
-data/*_preprocessed.csv
 data/*_backup.csv
-data/*_processed.csv
 
 # ================================
 # LOGS & OUTPUT FILES
