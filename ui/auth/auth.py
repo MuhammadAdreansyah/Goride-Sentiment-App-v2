@@ -1450,6 +1450,31 @@ def display_auth_tips(auth_type: str) -> None:
         with st.expander("💡 Tips Berguna", expanded=False):
             for tip in tips[auth_type]:
                 st.markdown(f"• {tip}")
+            
+            # Tambahkan tombol Google OAuth profesional untuk login dan register
+            if auth_type in ["login", "register"]:
+                st.markdown("---")  # Separator
+                st.markdown("**🚀 Login Cepat dengan Google:**")
+                
+                try:
+                    # Generate Google OAuth URL
+                    google_url = get_google_authorization_url()
+                    
+                    # Tombol Google OAuth profesional menggunakan st.link_button
+                    st.link_button(
+                        "🔐 Masuk dengan Google",
+                        google_url,
+                        help="Login langsung dengan akun Google Anda - lebih cepat dan aman",
+                        use_container_width=True
+                    )
+                    
+                    st.caption("✨ **Keunggulan login Google:** Tidak perlu mengingat password, verifikasi otomatis, dan akses lebih cepat!")
+                    
+                except Exception as e:
+                    # Jika ada error, tampilkan pesan alternatif
+                    log_event("auth", "Google OAuth URL generation", "error", error=e)
+                    st.info("🔧 **Login Google sedang dalam pemeliharaan.** Silakan gunakan login email sementara.")
+                    st.caption("Tim teknis sedang memperbaiki fitur ini. Terima kasih atas pengertian Anda.")
 
 # =============================================================================
 # UI COMPONENTS
@@ -1526,13 +1551,12 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             </div>
         """, unsafe_allow_html=True)
 
-        # Tombol login Google - TEMPORARY DISABLED untuk stabilitas
+        # Tombol login Google
         google_login_clicked = st.form_submit_button(
-            "🔗 Login Google (Dalam Perbaikan)", 
+            "Lanjutkan dengan Google", 
             use_container_width=True, 
-            type="secondary",
-            disabled=True,  # Temporary disabled
-            help="Fitur login Google sedang dalam perbaikan. Gunakan login email untuk sementara."
+            type="primary",
+            disabled=not app_ready
         )
 
         # Placeholder untuk pesan feedback dan progress di bawah tombol Google
@@ -1635,18 +1659,40 @@ def display_login_form(firebase_auth: Any, firestore_client: Any) -> None:
             show_warning_toast("Silakan isi kolom email dan kata sandi.")
 
 
-    # Handle tombol login Google di luar form - TEMPORARY DISABLED
+    # Handle tombol login Google di luar form
     if google_login_clicked:
-        # Show informative message instead of processing
-        st.info("""
-        🔧 **Fitur Login Google sedang dalam perbaikan**
+        # Gunakan containers yang sudah di-allocate
+        progress_container.progress(0.3)
+        message_container.caption("🔗 Mengarahkan ke Google OAuth...")
         
-        Untuk sementara, silakan gunakan:
-        - **Login dengan Email**: Masukkan email dan password Anda
-        - **Daftar Akun Baru**: Jika belum memiliki akun
-        
-        Terima kasih atas pengertian Anda! 🙏
-        """)
+        try:
+            google_url = get_google_authorization_url()
+            progress_container.progress(0.7)
+            message_container.caption("🌐 Mempersiapkan redirect ke Google...")
+            
+            # Show final loading state
+            progress_container.progress(1.0)
+            message_container.caption("✅ Mengarahkan ke halaman login Google...")
+            
+            # Log the redirect
+            log_event("auth", "Google OAuth redirect", "info", 
+                     details=f"Redirecting to Google OAuth: {google_url}")
+            show_success_toast("Mengarahkan ke Google login...")
+            
+            # Clear progress setelah menampilkan pesan sukses, seperti pada login email
+            time.sleep(SUCCESS_DISPLAY_DURATION)  # Beri waktu untuk menampilkan progress completion
+            progress_container.empty()
+            
+            # Meta refresh untuk local development, st.link_button untuk production
+            st.markdown(f"""
+                <meta http-equiv="refresh" content="0;url={google_url}">
+            """, unsafe_allow_html=True)
+            
+        except Exception as e:
+            log_event("auth", "Google OAuth redirect", "error", error=e)
+            progress_container.empty()
+            message_container.error("❌ Gagal mengarahkan ke Google. Silakan coba lagi.")
+            show_error_toast("Gagal mengarahkan ke Google login")
     
     # Tampilkan tips untuk login
     display_auth_tips("login")
