@@ -56,9 +56,9 @@ from sklearn.pipeline import Pipeline
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline as ImbPipeline
 
-# NLTK imports
-from nltk.util import ngrams
-from nltk.tokenize import word_tokenize
+# NLTK imports - minimal untuk kompatibilitas Streamlit Cloud
+# from nltk.util import ngrams  # Tidak digunakan lagi - diganti implementasi manual  
+# from nltk.tokenize import word_tokenize  # Tidak digunakan lagi - diganti split() sederhana
 
 # Indonesian language processing
 from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
@@ -314,7 +314,7 @@ def preprocess_text(text: Union[str, None], options: Optional[Dict] = None) -> s
 
 def get_word_frequencies(text: Union[str, List[str]], top_n: int = 10) -> Dict[str, int]:
     """
-    Get word frequencies from text.
+    Get word frequencies from text - Streamlit Cloud compatible version.
     
     Args:
         text: Text string or list of words
@@ -324,7 +324,12 @@ def get_word_frequencies(text: Union[str, List[str]], top_n: int = 10) -> Dict[s
         Dictionary of word frequencies
     """
     try:
-        words = nltk.word_tokenize(text) if isinstance(text, str) else text
+        # Use simple tokenization instead of NLTK to avoid punkt_tab dependency
+        if isinstance(text, str):
+            words = [word.strip().lower() for word in text.split() if word.strip()]
+        else:
+            words = text
+            
         word_freq = Counter(words)
         return dict(word_freq.most_common(top_n))
     except Exception as e:
@@ -334,7 +339,7 @@ def get_word_frequencies(text: Union[str, List[str]], top_n: int = 10) -> Dict[s
 
 def get_ngrams(text: Union[str, List[str]], n: int, top_n: int = 10) -> Dict[str, int]:
     """
-    Get n-grams from text.
+    Get n-grams from text - Streamlit Cloud compatible version.
     
     Args:
         text: Text string or list of words
@@ -345,10 +350,25 @@ def get_ngrams(text: Union[str, List[str]], n: int, top_n: int = 10) -> Dict[str
         Dictionary of n-gram frequencies
     """
     try:
-        words = nltk.word_tokenize(text) if isinstance(text, str) else text
-        n_grams = list(ngrams(words, n))
-        n_gram_freq = Counter([' '.join(g) for g in n_grams])
+        # Use simple tokenization instead of NLTK to avoid punkt_tab dependency
+        if isinstance(text, str):
+            # Simple tokenization - split by whitespace and clean
+            words = [word.strip().lower() for word in text.split() if word.strip()]
+        else:
+            words = text
+            
+        # Create n-grams manually to avoid NLTK dependency
+        if len(words) < n:
+            return {}
+            
+        n_grams = []
+        for i in range(len(words) - n + 1):
+            n_gram = ' '.join(words[i:i+n])
+            n_grams.append(n_gram)
+            
+        n_gram_freq = Counter(n_grams)
         return dict(n_gram_freq.most_common(top_n))
+        
     except Exception as e:
         st.error(f"Error in n-gram analysis: {str(e)}")
         return {}

@@ -349,7 +349,8 @@ class SentimentPredictionInterface:
         st.subheader("Kata Kunci yang Mempengaruhi Prediksi")
         
         try:
-            clean_tokens = nltk.word_tokenize(text_input.lower())
+            # Use simple tokenization instead of NLTK to avoid punkt_tab dependency
+            clean_tokens = [word.strip().lower() for word in text_input.split() if word.strip()]
             
             if clean_tokens:
                 token_df = pd.DataFrame({
@@ -464,7 +465,7 @@ class SentimentPredictionInterface:
                 "Nilai": [
                     f"{prediction} {emoji}",
                     f"{confidence:.2f}%",
-                    len(nltk.word_tokenize(text_input)),
+                    len([word for word in text_input.split() if word.strip()]),
                     len(text_input)
                 ]
             }
