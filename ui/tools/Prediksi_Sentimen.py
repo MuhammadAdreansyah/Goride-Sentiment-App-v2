@@ -28,6 +28,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
+import nltk
 import numpy as np
 import sys
 import os
@@ -45,8 +46,7 @@ from utils import (
     predict_sentiment, 
     get_or_train_model, 
     load_prediction_model, 
-    save_model_and_vectorizer_predict,
-    tokenize_words
+    save_model_and_vectorizer_predict
 )
 
 
@@ -349,7 +349,7 @@ class SentimentPredictionInterface:
         st.subheader("Kata Kunci yang Mempengaruhi Prediksi")
         
         try:
-            clean_tokens = tokenize_words(text_input.lower())
+            clean_tokens = nltk.word_tokenize(text_input.lower())
             
             if clean_tokens:
                 token_df = pd.DataFrame({
@@ -464,7 +464,7 @@ class SentimentPredictionInterface:
                 "Nilai": [
                     f"{prediction} {emoji}",
                     f"{confidence:.2f}%",
-                    len(tokenize_words(text_input)),
+                    len(nltk.word_tokenize(text_input)),
                     len(text_input)
                 ]
             }
