@@ -11,13 +11,6 @@ Author: SentimenGo Team
 Version: 2.0
 """
 
-# Setup NLTK for Streamlit Cloud FIRST
-try:
-    from nltk_setup import setup_nltk_for_streamlit_cloud
-    setup_nltk_for_streamlit_cloud()
-except Exception:
-    pass  # Continue if setup fails
-
 import streamlit as st
 
 # ===================================================================
